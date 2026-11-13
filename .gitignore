@@ -1,0 +1,19 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+# tools
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# local runs (never commit job/result artifacts)
+jobs/
+results/
+*.log
