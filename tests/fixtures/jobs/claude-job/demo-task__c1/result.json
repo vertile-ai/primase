@@ -1,0 +1,1 @@
+{"task_name": "demo/demo-task", "verifier_result": {"rewards": {"reward": 1}}, "agent_info": {"name": "claude-code", "version": "1.0"}, "started_at": "2026-11-13T00:00:00Z", "finished_at": "2026-11-13T00:02:00Z", "agent_execution": {"started_at": "2026-11-13T00:00:30Z", "finished_at": "2026-11-13T00:01:30Z"}}

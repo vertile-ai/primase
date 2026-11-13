@@ -14,6 +14,6 @@ venv/
 .coverage
 htmlcov/
 # local runs (never commit job/result artifacts)
-jobs/
-results/
+/jobs/
+/results/
 *.log
