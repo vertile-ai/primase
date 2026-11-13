@@ -19,7 +19,7 @@ pytest -q
 ```
 
 Please keep changes to the harness generic. Suites, tasks, and experiment YAMLs
-belong in the benchmark repository that *depends on* helicase, not in this repo
+belong in the benchmark repository that *depends on* primase, not in this repo
 (beyond the tiny `examples/minimal/` illustration).
 
 ## Backends
@@ -27,9 +27,9 @@ belong in the benchmark repository that *depends on* helicase, not in this repo
 Harbor is the primary built-in backend. Pier is kept as an optional extra for
 callers who still need it; new work should prefer Harbor. To add another runner,
 see [docs/backends.md](docs/backends.md) and register an entry point in the
-`helicase.backends` group.
+`primase.backends` group.
 
 ## Secrets
 
-Never commit API keys, env files, or job/result artifacts. `helicase scan-secrets`
+Never commit API keys, env files, or job/result artifacts. `primase scan-secrets`
 can gate a push. Test fixtures must use obviously fake values.

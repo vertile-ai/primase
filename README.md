@@ -1,32 +1,31 @@
-# helicase
+# primase
 
-A unified, resumable benchmark harness for agent evals. Helicase sits **on top of**
+A unified, resumable benchmark harness for agent evals. Primase sits **on top of**
 [Harbor](https://github.com/harbor-framework/harbor) (and, optionally,
 [Pier](https://github.com/datacurve-ai/pier)): you keep writing tasks in those
-formats, and helicase gives you one experiment YAML, one result schema, and a
+formats, and primase gives you one experiment YAML, one result schema, and a
 report that answers *did pass rate hold, and if so, how many tokens and how much
 time did a variant save?*
 
-The import name and CLI are `helicase`. The PyPI distribution name is
-**`helicase-bench`** (`helicase` was already taken). This package is not
-published to PyPI yet; install from Git.
+The import name, CLI, and PyPI distribution name are all `primase`.
+This package is not published to PyPI yet; install from Git.
 
 ```bash
-pip install "helicase-bench[harbor] @ git+https://github.com/vertile-ai/helicase.git"
+pip install "primase[harbor] @ git+https://github.com/vertile-ai/primase.git"
 # Harbor is the primary backend. The [harbor]/[pier] extras declare the backend;
 # you still need the Harbor (or Pier) CLI on PATH / in your benchmark venv.
 ```
 
 Requires Python 3.11–3.13.
 
-## What helicase adds over Harbor and Pier
+## What primase adds over Harbor and Pier
 
 Harbor and Pier already run a task in a container and score it with the task's
-own verifier. Helicase does not replace that. It adds the layer you need when
+own verifier. Primase does not replace that. It adds the layer you need when
 you are comparing variants (runtimes, prompts, tools, privileges, …) and care
 about **token cost** as well as pass rate:
 
-| | Harbor / Pier alone | Helicase |
+| | Harbor / Pier alone | Primase |
 |---|---|---|
 | Backends | One runner, one CLI | One interface over Harbor (primary) and Pier (optional), plus a pluggable entry-point registry for new harnesses |
 | Experiment | Flags assembled by hand | One YAML: models, variants, tiers, trials, concurrency, budget, network |
@@ -36,23 +35,23 @@ about **token cost** as well as pass rate:
 | Budget | — | Stop on the first CLI-reported (billed) cost, an estimate cap, or a model outside `included_models` |
 | Secrets | Easy to leak into logs | Secrets only from the environment or a chmod-600 env-file; redacted logs; job dirs scrubbed after each trial |
 | Resume | Re-run the job | Deterministic trial IDs; completed jobs are skipped; interrupted jobs are moved aside |
-| Network | Task.toml `network_mode` | Experiment-level `network: open or restricted` (default **open**, because we measure token cost and the agent must reach its API), overridable with `HELICASE_NETWORK`. Open mode forces the *agent* phase to `public` without changing a separate verifier's policy |
+| Network | Task.toml `network_mode` | Experiment-level `network: open or restricted` (default **open**, because we measure token cost and the agent must reach its API), overridable with `PRIMASE_NETWORK`. Open mode forces the *agent* phase to `public` without changing a separate verifier's policy |
 
-Helicase is only the harness. Suites, tasks, experiment YAMLs, and results live
+Primase is only the harness. Suites, tasks, experiment YAMLs, and results live
 in the benchmark repository that depends on it.
 
 ## Quickstart
 
 ```bash
-# 1. Install helicase into the same venv that already has the Harbor CLI
+# 1. Install primase into the same venv that already has the Harbor CLI
 pip install -e ".[dev]"
 
 # 2. Write an experiment (see examples/minimal/)
-helicase plan     experiments/my-exp.yaml
-helicase validate experiments/my-exp.yaml
-helicase run      experiments/my-exp.yaml --variant control --max-trials 1
-helicase report   experiments/my-exp.yaml   # → results/<name>/{trials.csv,summary.md}
-helicase scan-secrets --env-file ~/.config/mybench/secrets.env --prefix sk- .
+primase plan     experiments/my-exp.yaml
+primase validate experiments/my-exp.yaml
+primase run      experiments/my-exp.yaml --variant control --max-trials 1
+primase report   experiments/my-exp.yaml   # → results/<name>/{trials.csv,summary.md}
+primase scan-secrets --env-file ~/.config/mybench/secrets.env --prefix sk- .
 ```
 
 Filters `--suite/--task/--model/--variant/--trial` work on every command.
@@ -89,7 +88,7 @@ suites:
   - {id: my-suite, backend: harbor}   # default backend is harbor
 trials: 3
 concurrency: 1
-network: open                      # default. Override with HELICASE_NETWORK=restricted
+network: open                      # default. Override with PRIMASE_NETWORK=restricted
 # harbor_restricted_compose: adapters/compose-no-egress.yaml   # required when restricted
 budget:
   stop_on_credit_billing: true
@@ -98,7 +97,7 @@ budget:
   included_models: [composer-2.5, "grok-4.7-*"]
 ```
 
-**Network.** Default is `open`. `HELICASE_NETWORK=open|restricted` overrides the
+**Network.** Default is `open`. `PRIMASE_NETWORK=open|restricted` overrides the
 YAML when set. In `open` mode Harbor runs against a per-trial overlay that sets
 `[agent].network_mode = "public"` (and opens a `no-network` agent-environment
 baseline). A separate verifier environment keeps the task's own grading policy.
@@ -111,13 +110,13 @@ hard-coded A/B arms. The report treats `baseline` as the comparison side.
 ## Architecture
 
 ```text
-helicase plan|validate|run|collect|report|scan-secrets
+primase plan|validate|run|collect|report|scan-secrets
         │
         ├── config.py        YAML → pydantic ExperimentConfig
         ├── registry.py      suites.json → tasks, tiers, variant dirs
         ├── orchestrator.py  plan → run (resume, concurrency, ledger) → collect
         ├── backends/        Harbor (primary), Pier (optional extra)
-        │                    entry points: helicase.backends
+        │                    entry points: primase.backends
         ├── collect.py       job dir → TrialResult (cursor-cli / claude-code / codex / ATIF)
         ├── budget.py        billed-cost + estimate caps
         ├── report.py        trials.csv + summary.md

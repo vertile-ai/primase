@@ -7,9 +7,9 @@ from .base import Backend, RunContext
 class PierBackend(Backend):
     """Datacurve Pier (`pier run`). Official DeepSWE runner.
 
-    Pier's own egress proxy is used regardless of helicase's network setting; when
+    Pier's own egress proxy is used regardless of primase's network setting; when
     network=restricted the experiment should also set a task-level no-network policy
-    in the suite (that lives in the benchmark repo, not in helicase).
+    in the suite (that lives in the benchmark repo, not in primase).
     """
 
     name = "pier"

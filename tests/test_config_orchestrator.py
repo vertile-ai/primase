@@ -3,10 +3,10 @@ import stat
 import pytest
 import yaml
 
-from helicase.backends import get_backend
-from helicase.config import NETWORK_ENV, load_config
-from helicase.orchestrator import Orchestrator, plan
-from helicase.secrets import SecretStore
+from primase.backends import get_backend
+from primase.config import NETWORK_ENV, load_config
+from primase.orchestrator import Orchestrator, plan
+from primase.secrets import SecretStore
 
 FAKE = "fake_test_secret_0123456789abcdef"
 
@@ -93,7 +93,7 @@ def test_network_env_override(bench_root):
     cmd = get_backend("harbor", bench_root).build_command(p.spec, p.ctx)
     assert "--extra-docker-compose" in cmd
 
-    with pytest.raises(ValueError, match="HELICASE_NETWORK"):
+    with pytest.raises(ValueError, match="PRIMASE_NETWORK"):
         _cfg(bench_root, environ={NETWORK_ENV: "maybe"})
 
 

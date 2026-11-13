@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from helicase.backends import (
+from primase.backends import (
     Backend,
     RunContext,
     get_backend,
@@ -9,7 +9,7 @@ from helicase.backends import (
     register_backend,
     reset_registry,
 )
-from helicase.schema import TrialSpec
+from primase.schema import TrialSpec
 
 
 class DummyBackend(Backend):

@@ -1,6 +1,6 @@
 # Tiny generic example. Not a real benchmark — there is no task checkout here.
 name: minimal-demo
-description: illustration of a helicase experiment YAML
+description: illustration of a primase experiment YAML
 root: .
 agent: {name: cursor-cli}
 models:

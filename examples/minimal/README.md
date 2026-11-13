@@ -1,6 +1,6 @@
 # Minimal experiment
 
-A toy layout showing the YAML helicase expects. It is not a real benchmark
+A toy layout showing the YAML primase expects. It is not a real benchmark
 (no tasks, no images). Copy the shape into your own benchmark repository.
 
 ```text

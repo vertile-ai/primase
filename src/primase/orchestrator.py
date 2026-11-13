@@ -17,7 +17,7 @@ from .registry import Registry
 from .schema import TrialResult, TrialSpec
 from .secrets import SecretStore
 
-log = logging.getLogger("helicase")
+log = logging.getLogger("primase")
 
 
 @dataclass

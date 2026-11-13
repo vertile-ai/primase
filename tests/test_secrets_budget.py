@@ -2,10 +2,10 @@ import os
 
 import pytest
 
-from helicase.budget import BudgetExceeded, BudgetGuard
-from helicase.config import BudgetSpec
-from helicase.schema import TrialResult
-from helicase.secrets import REDACTED, SecretStore, parse_env_file
+from primase.budget import BudgetExceeded, BudgetGuard
+from primase.config import BudgetSpec
+from primase.schema import TrialResult
+from primase.secrets import REDACTED, SecretStore, parse_env_file
 
 FAKE = "fake_test_secret_0123456789abcdef"
 

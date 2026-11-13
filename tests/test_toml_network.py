@@ -1,7 +1,7 @@
-from helicase.backends import get_backend
-from helicase.backends.harbor import _force_open_agent_network
-from helicase.orchestrator import plan
-from helicase.toml_edit import get_table_key, set_table_key
+from primase.backends import get_backend
+from primase.backends.harbor import _force_open_agent_network
+from primase.orchestrator import plan
+from primase.toml_edit import get_table_key, set_table_key
 
 DEEPSWE_LIKE = """schema_version = "1.3"
 [task]
@@ -51,7 +51,7 @@ def test_force_open_environment_baseline_when_closed():
 def test_harbor_prepare_run_overlay(bench_root, tmp_path):
     import yaml
 
-    from helicase.config import load_config
+    from primase.config import load_config
 
     task = bench_root / "work/variants/tb/control/rlf"
     (task / "task.toml").write_text(DEEPSWE_LIKE)

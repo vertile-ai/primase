@@ -107,7 +107,10 @@ def paired_deltas(rows: list[TrialResult], baseline: str = "control") -> list[di
                 a = _median([getattr(r, m) for r in base_u])
                 b = _median([getattr(r, m) for r in cand_u])
                 d[f"{m}_base"], d[f"{m}_variant"] = a, b
-                d[f"{m}_delta_pct"] = (100.0 * (b - a) / a) if (a not in (None, 0) and b is not None) else None
+                if a is None or b is None or a == 0:
+                    d[f"{m}_delta_pct"] = None
+                else:
+                    d[f"{m}_delta_pct"] = 100.0 * (b - a) / a
             out.append(d)
     return out
 

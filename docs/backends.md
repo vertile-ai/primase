@@ -1,6 +1,6 @@
 # Writing a backend adapter
 
-A helicase backend is a subclass of `helicase.backends.Backend` that turns one
+A primase backend is a subclass of `primase.backends.Backend` that turns one
 `TrialSpec` + `RunContext` into a command the orchestrator can run, then
 collects a Harbor-like job directory into `TrialResult` rows.
 
@@ -8,8 +8,8 @@ collects a Harbor-like job directory into `TrialResult` rows.
 
 ```python
 from pathlib import Path
-from helicase.backends import Backend, RunContext, Validation
-from helicase.schema import TrialSpec, TrialResult
+from primase.backends import Backend, RunContext, Validation
+from primase.schema import TrialSpec, TrialResult
 
 class MyBackend(Backend):
     name = "mybench"
@@ -32,19 +32,19 @@ them; do not hard-code a particular product or benchmark.
 The default `collect()` assumes the Harbor/Pier trial layout (`result.json`,
 `agent/cursor-cli.txt`, `agent/claude-code.txt`, `agent/sessions/**`,
 `agent/trajectory.json`). If your runner writes something else, override
-`collect()` and/or add a parser in `helicase.collect`.
+`collect()` and/or add a parser in `primase.collect`.
 
 ## Registration
 
-Advertise the class under the `helicase.backends` entry-point group so users
-can `pip install` your package next to helicase:
+Advertise the class under the `primase.backends` entry-point group so users
+can `pip install` your package next to primase:
 
 ```toml
-[project.entry-points."helicase.backends"]
+[project.entry-points."primase.backends"]
 mybench = "mypkg.backend:MyBackend"
 ```
 
-In tests you can also call `helicase.backends.register_backend("mybench", MyBackend)`.
+In tests you can also call `primase.backends.register_backend("mybench", MyBackend)`.
 
 The experiment YAML then says:
 
@@ -53,17 +53,17 @@ suites:
   - {id: some-suite, backend: mybench}
 ```
 
-If `backend` is omitted, helicase uses the suite's `runner` in `suites.json`,
+If `backend` is omitted, primase uses the suite's `runner` in `suites.json`,
 and if that is omitted too, it defaults to **`harbor`**.
 
 ## Built-in backends
 
-- **Harbor** (primary). `helicase-bench[harbor]`. Used for Terminal-Bench and
+- **Harbor** (primary). `primase[harbor]`. Used for Terminal-Bench and
   any other Harbor-format suite, including DeepSWE (schema 1.3 tasks run on
   Harbor 0.25 / schema 1.4). When `network=open`, Harbor is pointed at a
   per-trial overlay that sets `[agent].network_mode = "public"`; a separate
   verifier environment keeps the task's grading policy.
-- **Pier** (optional). `helicase-bench[pier]`. Kept for callers who still need
+- **Pier** (optional). `primase[pier]`. Kept for callers who still need
   Datacurve Pier; new experiments should prefer Harbor. The extras do not
   pip-install the CLIs — install Harbor or Pier into the benchmark venv
   yourself (the PyPI names `harbor` / `pier` are unrelated packages).

@@ -1,4 +1,4 @@
-from helicase.collect import (
+from primase.collect import (
     collect_job,
     collect_trial,
     job_complete,
@@ -64,7 +64,7 @@ def test_job_complete(fixtures, tmp_path):
 
 
 def test_tool_output_model_visible_approximation():
-    from helicase.collect import _tool_output
+    from primase.collect import _tool_output
 
     shell = {"success": {"command": "npm test", "stdout": "aa", "stderr": "b", "interleavedOutput": "aab"}}
     assert _tool_output("shellToolCall", shell) == (3, 3)

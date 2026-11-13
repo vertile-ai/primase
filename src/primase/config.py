@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 Tier = Literal["low", "medium", "high"]
 NetworkMode = Literal["open", "restricted"]
 
-NETWORK_ENV = "HELICASE_NETWORK"
+NETWORK_ENV = "PRIMASE_NETWORK"
 
 
 class _Strict(BaseModel):
@@ -121,7 +121,7 @@ class ExperimentConfig(_Strict):
         description=(
             "agent network policy. Default 'open' (we measure token cost, so the agent must reach its API). "
             "Set 'restricted' to attach harbor_restricted_compose / rely on the backend's egress controls. "
-            "Overridden by the HELICASE_NETWORK environment variable."
+            "Overridden by the PRIMASE_NETWORK environment variable."
         ),
     )
     harbor_restricted_compose: Path | None = Field(
@@ -169,7 +169,7 @@ class ExperimentConfig(_Strict):
         return self
 
     def resolved_network(self, environ: dict[str, str] | None = None) -> NetworkMode:
-        """YAML value, overridden by HELICASE_NETWORK=open|restricted when set."""
+        """YAML value, overridden by PRIMASE_NETWORK=open|restricted when set."""
         env = (environ if environ is not None else os.environ).get(NETWORK_ENV, "").strip().lower()
         if not env:
             return self.network
@@ -234,6 +234,6 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> Expe
     data = _normalize_legacy(yaml.safe_load(p.read_text()) or {})
     cfg = ExperimentConfig.model_validate(data)
     cfg._source = p
-    # fail fast if HELICASE_NETWORK is set to something invalid
+    # fail fast if PRIMASE_NETWORK is set to something invalid
     cfg.resolved_network(environ)
     return cfg

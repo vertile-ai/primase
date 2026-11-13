@@ -1,10 +1,10 @@
 """Pluggable backend registry.
 
 Built-in adapters (Harbor, Pier) are always importable. They are also advertised
-via the ``helicase.backends`` entry-point group so a third-party package can
-register ``pip install``-able backends without patching helicase::
+via the ``primase.backends`` entry-point group so a third-party package can
+register ``pip install``-able backends without patching primase::
 
-    [project.entry-points."helicase.backends"]
+    [project.entry-points."primase.backends"]
     mybench = "mypkg.backend:MyBackend"
 """
 
@@ -28,7 +28,7 @@ def _builtins() -> dict[str, type[Backend]]:
 def _entry_point_backends() -> dict[str, type[Backend]]:
     found: dict[str, type[Backend]] = {}
     try:
-        eps = entry_points(group="helicase.backends")
+        eps = entry_points(group="primase.backends")
     except Exception:  # noqa: BLE001
         return found
     for ep in eps:

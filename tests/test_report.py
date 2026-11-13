@@ -1,6 +1,6 @@
-from helicase.collect import collect_trial
-from helicase.report import markdown, paired_deltas, regressions, write_csv
-from helicase.schema import TrialResult
+from primase.collect import collect_trial
+from primase.report import markdown, paired_deltas, regressions, write_csv
+from primase.schema import TrialResult
 
 
 def _r(task, variant, status, tokens, t=1, agent_s=100.0):

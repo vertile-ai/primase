@@ -34,7 +34,7 @@ def _force_open_agent_network(task_toml: str) -> tuple[str, list[str]]:
 class HarborBackend(Backend):
     """Harbor (`harbor run`). Primary built-in backend.
 
-    When helicase ``network=open`` (the default), a per-trial overlay of the task
+    When primase ``network=open`` (the default), a per-trial overlay of the task
     directory is used so ``[agent].network_mode`` is forced to ``public``. A
     separate verifier environment keeps the task's own grading network policy.
     """

@@ -1,10 +1,10 @@
 import pytest
 import yaml
 
-from helicase.backends import get_backend
-from helicase.config import VariantSpec, load_config
-from helicase.orchestrator import plan
-from helicase.registry import Registry
+from primase.backends import get_backend
+from primase.config import VariantSpec, load_config
+from primase.orchestrator import plan
+from primase.registry import Registry
 
 
 def test_registry_select_and_variant_dir(bench_root):

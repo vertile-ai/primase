@@ -56,7 +56,7 @@ class TrialSpec(BaseModel):
 
         task = slug(self.task)[:40]
         return (
-            f"hc-{slug(self.experiment)}-{task}-{slug(self.model)}"
+            f"pm-{slug(self.experiment)}-{task}-{slug(self.model)}"
             f"-{slug(self.variant)}-t{self.trial_index}-{self.trial_id}"
         )
 

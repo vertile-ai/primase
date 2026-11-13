@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "helicase-bench"
-version = "0.1.0"
-description = "Helicase: a unified, resumable benchmark harness over Harbor, Pier, and pluggable backends."
+name = "primase"
+version = "0.1.1"
+description = "Primase: a unified, resumable benchmark harness over Harbor, Pier, and pluggable backends."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
@@ -24,26 +24,26 @@ dependencies = ["pydantic>=2.5", "pyyaml>=6"]
 
 [project.optional-dependencies]
 # Backends shell out to the Harbor / Pier CLIs (install those separately).
-# The extras exist so `pip install helicase-bench[harbor]` / `[pier]` is the
+# The extras exist so `pip install primase[harbor]` / `[pier]` is the
 # documented way to opt into a backend; they also reserve the extra names.
 harbor = []
 pier = []
 dev = ["pytest>=8", "ruff>=0.8", "mypy>=1.13", "types-PyYAML"]
 
 [project.urls]
-Homepage = "https://github.com/vertile-ai/helicase"
-Repository = "https://github.com/vertile-ai/helicase"
-Issues = "https://github.com/vertile-ai/helicase/issues"
+Homepage = "https://github.com/vertile-ai/primase"
+Repository = "https://github.com/vertile-ai/primase"
+Issues = "https://github.com/vertile-ai/primase/issues"
 
 [project.scripts]
-helicase = "helicase.cli:main"
+primase = "primase.cli:main"
 
-[project.entry-points."helicase.backends"]
-harbor = "helicase.backends.harbor:HarborBackend"
-pier = "helicase.backends.pier:PierBackend"
+[project.entry-points."primase.backends"]
+harbor = "primase.backends.harbor:HarborBackend"
+pier = "primase.backends.pier:PierBackend"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/helicase"]
+packages = ["src/primase"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -71,7 +71,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 plugins = ["pydantic.mypy"]
 python_version = "3.11"
-packages = ["helicase"]
+packages = ["primase"]
 pretty = true
 warn_unused_ignores = true
 warn_redundant_casts = true

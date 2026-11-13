@@ -1,4 +1,4 @@
-"""`helicase` CLI: plan | validate | run | collect | report | scan-secrets."""
+"""`primase` CLI: plan | validate | run | collect | report | scan-secrets."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class _RedactingFormatter(logging.Formatter):
 def _setup_logging(redact: Redactor, verbose: bool) -> None:
     h = logging.StreamHandler(sys.stderr)
     h.setFormatter(_RedactingFormatter(redact, "%(asctime)s %(levelname)s %(message)s", "%H:%M:%S"))
-    root = logging.getLogger("helicase")
+    root = logging.getLogger("primase")
     root.handlers[:] = [h]
     root.setLevel(logging.DEBUG if verbose else logging.INFO)
 
@@ -54,12 +54,12 @@ def _report(cfg: ExperimentConfig, rows: list[TrialResult], notes: list[str] | N
     out = cfg.results_path
     csv_p = write_csv(rows, out / "trials.csv")
     md_p = out / "summary.md"
-    md_p.write_text(markdown(rows, f"helicase – {cfg.name}", cfg.baseline_name, notes))
+    md_p.write_text(markdown(rows, f"primase – {cfg.name}", cfg.baseline_name, notes))
     return csv_p, md_p
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="helicase", description=__doc__)
+    ap = argparse.ArgumentParser(prog="primase", description=__doc__)
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("plan", "validate", "run", "collect", "report"):
