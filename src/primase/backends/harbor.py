@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from ..schema import TrialSpec
 from ..toml_edit import get_table_key, set_table_key
 from .base import Backend, RunContext
@@ -37,6 +34,7 @@ class HarborBackend(Backend):
     When primase ``network=open`` (the default), a per-trial overlay of the task
     directory is used so ``[agent].network_mode`` is forced to ``public``. A
     separate verifier environment keeps the task's own grading network policy.
+    Variant ``task_toml`` overrides are applied in the same overlay.
     """
 
     name = "harbor"
@@ -78,31 +76,26 @@ class HarborBackend(Backend):
         return cmd + list(ctx.extra_args)
 
     def prepare_run(self, spec: TrialSpec, ctx: RunContext) -> None:
+        # Run hooks / image restore without applying task_toml yet — we fold that into one overlay.
+        overrides = dict(ctx.task_toml_overrides)
+        ctx.task_toml_overrides = {}
         super().prepare_run(spec, ctx)
-        if ctx.network == "open":
-            overlay = self._open_network_overlay(spec, ctx)
-            if overlay is not None:
-                ctx.task_dir = overlay
+        ctx.task_toml_overrides = overrides
 
-    def _open_network_overlay(self, spec: TrialSpec, ctx: RunContext) -> Path | None:
-        src = ctx.task_dir
-        toml_path = src / "task.toml"
-        if not toml_path.exists():
-            return None
-        original = toml_path.read_text()
-        patched, notes = _force_open_agent_network(original)
-        if not notes:
-            return None
-        dest = ctx.jobs_dir / ".overlays" / spec.job_name
-        if dest.exists():
-            # previous attempt: start clean
-            import shutil
+        need_network = ctx.network == "open"
+        if not overrides and not need_network:
+            return
 
-            shutil.rmtree(dest)
-        dest.mkdir(parents=True)
-        for child in src.iterdir():
-            if child.name == "task.toml":
-                continue
-            os.symlink(child, dest / child.name)
-        (dest / "task.toml").write_text(patched)
-        return dest
+        def mutate(text: str) -> tuple[str, list[str]]:
+            notes: list[str] = []
+            if need_network:
+                text, n = _force_open_agent_network(text)
+                notes.extend(n)
+            return text, notes
+
+        overlay = self._task_overlay(spec, ctx, overrides, extra_mutate=mutate if need_network else None)
+        if overlay is not None:
+            ctx.task_dir = overlay
+        elif need_network:
+            # overrides empty but network open with no changes needed — still fine
+            pass

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import fnmatch
+import hashlib
+import json
 import os
 import re
 from pathlib import Path
@@ -31,12 +32,29 @@ class ModelSpec(_Strict):
         return f"{self.provider_prefix}/{self.id}" if self.provider_prefix else self.id
 
 
-class VariantSpec(_Strict):
-    """One experimental condition.
+class AgentSpec(_Strict):
+    """Agent selection. Product-specific knobs live under ``plugin`` (validated by the agent plugin)."""
 
-    Paths, env, and hooks are generic: a variant may pin a task-directory name,
-    inject environment variables, run setup/prebuild shell commands, require
-    extra files under the task dir, or restore a prebuilt image tag prefix.
+    name: str = "cursor-cli"
+    kwargs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="forwarded to Harbor/Pier as --ak key=value (e.g. config path for the agent CLI)",
+    )
+    plugin: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "opaque plugin config. For cursor-cli: included_models (fnmatch list), allow_non_included_models (bool)."
+        ),
+    )
+
+
+class VariantSpec(_Strict):
+    """One experimental condition — a general override bundle, not only an env patch.
+
+    A variant may override the agent (name/kwargs/plugin), the model, arbitrary
+    task.toml fields, plus the classic env/setup/prebuild/require_paths/image_prefix.
+    Comparing stock-vs-agentic runtimes, agent-config A-vs-B, or agent X-vs-Y all
+    use this same mechanism.
     """
 
     description: str = ""
@@ -57,9 +75,48 @@ class VariantSpec(_Strict):
         None,
         description="if the task's docker_image starts with this prefix, restore a 'keep-' tag before run",
     )
+    agent: AgentSpec | None = Field(
+        None,
+        description="override the experiment-level agent (name, kwargs, plugin) for this variant only",
+    )
+    model: ModelSpec | str | None = Field(
+        None,
+        description=(
+            "override model for this variant. String form is a model id (provider_prefix taken from "
+            "a matching top-level models[] entry, else 'cursor'). When set, this variant is not "
+            "crossed with the top-level models list."
+        ),
+    )
+    task_toml: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "arbitrary task.toml table.key overrides, e.g. {agent: {timeout_sec: 600}, environment: {cpus: 2}}"
+        ),
+    )
 
     def directory_name(self, variant_name: str) -> str:
         return self.dir or variant_name
+
+    def resolved_model(self, catalog: list[ModelSpec]) -> ModelSpec | None:
+        if self.model is None:
+            return None
+        if isinstance(self.model, ModelSpec):
+            return self.model
+        mid = self.model
+        for m in catalog:
+            if m.id == mid:
+                return m
+        return ModelSpec(id=mid)
+
+    def resolved_agent(self, default: AgentSpec) -> AgentSpec:
+        if self.agent is None:
+            return default
+        # shallow-merge plugin/kwargs so a variant can override just kwargs
+        return AgentSpec(
+            name=self.agent.name or default.name,
+            kwargs={**default.kwargs, **self.agent.kwargs},
+            plugin={**default.plugin, **self.agent.plugin},
+        )
 
 
 class SuiteSpec(_Strict):
@@ -69,32 +126,23 @@ class SuiteSpec(_Strict):
     agent_timeout_multiplier: float | None = None
 
 
-class AgentSpec(_Strict):
-    name: str = "cursor-cli"
-    kwargs: dict[str, str] = Field(default_factory=dict)
-
-
 class BudgetSpec(_Strict):
+    """Generic spend caps. Product-specific allow-lists live on ``agent.plugin``."""
+
     max_reported_cost_usd: float = Field(
         0.0,
         ge=0,
         description="abort when the agent CLI itself reports more than this (CLI-reported cost = billed usage)",
     )
-    stop_on_credit_billing: bool = Field(True, description="abort on any CLI-reported billed cost > 0")
+    stop_on_billed_cost: bool = Field(
+        True,
+        description="abort on any CLI-reported billed cost > 0 (generic; replaces stop_on_credit_billing)",
+    )
     max_estimated_cost_usd: float | None = Field(
         None,
         ge=0,
         description="abort when the price-table ESTIMATE summed over the run exceeds this (runaway guard)",
     )
-    included_models: list[str] = Field(
-        default_factory=list, description="fnmatch patterns of models known to draw from included usage"
-    )
-    allow_non_included_models: bool = False
-
-    def model_allowed(self, model_id: str) -> bool:
-        if self.allow_non_included_models or not self.included_models:
-            return True
-        return any(fnmatch.fnmatchcase(model_id, p) for p in self.included_models)
 
 
 class ExperimentConfig(_Strict):
@@ -107,7 +155,7 @@ class ExperimentConfig(_Strict):
     env_file: Path | None = None
     secrets: list[str] = Field(default_factory=list)
     agent: AgentSpec = Field(default_factory=AgentSpec)
-    models: list[ModelSpec]
+    models: list[ModelSpec] = Field(default_factory=list)
     variants: dict[str, VariantSpec]
     baseline: str | None = Field(None, description="variant name treated as the comparison baseline")
     tiers: list[Tier] = Field(default_factory=lambda: ["low"])  # type: ignore[arg-type]
@@ -160,12 +208,28 @@ class ExperimentConfig(_Strict):
         ids = [m.id for m in self.models]
         if len(set(ids)) != len(ids):
             raise ValueError("duplicate model ids")
-        for m in self.models:
-            if not self.budget.model_allowed(m.id):
-                raise ValueError(
-                    f"model {m.id!r} is not in budget.included_models; "
-                    "set allow_non_included_models: true to bill credits"
-                )
+        # every variant must resolve to at least one model
+        for vname, v in self.variants.items():
+            if v.model is None and not self.models:
+                raise ValueError(f"variant {vname!r} has no model override and experiment.models is empty")
+        # agent-plugin budget hooks (e.g. cursor-cli included_models) fail fast at load
+        from .agents import budget_hooks_for
+        from .budget import BudgetExceeded
+
+        try:
+            for _vname, v in self.variants.items():
+                agent = v.resolved_agent(self.agent)
+                hooks = budget_hooks_for(agent.name, agent.plugin)
+                for m in self.models_for_variant(v):
+                    for h in hooks:
+                        h.check_model(m.id)
+            if self.models:
+                hooks = budget_hooks_for(self.agent.name, self.agent.plugin)
+                for m in self.models:
+                    for h in hooks:
+                        h.check_model(m.id)
+        except BudgetExceeded as e:
+            raise ValueError(str(e)) from e
         return self
 
     def resolved_network(self, environ: dict[str, str] | None = None) -> NetworkMode:
@@ -176,6 +240,21 @@ class ExperimentConfig(_Strict):
         if env not in ("open", "restricted"):
             raise ValueError(f"{NETWORK_ENV} must be 'open' or 'restricted' (got {env!r})")
         return env  # type: ignore[return-value]
+
+    def models_for_variant(self, variant: VariantSpec) -> list[ModelSpec]:
+        resolved = variant.resolved_model(self.models)
+        if resolved is not None:
+            return [resolved]
+        return list(self.models)
+
+    def canonical_dict(self) -> dict[str, Any]:
+        """Resolved, hashable experiment config (paths as strings, no private attrs)."""
+        data = self.model_dump(mode="json")
+        return data
+
+    def config_hash(self) -> str:
+        blob = json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
     # resolved paths -------------------------------------------------------------------------
     @property
@@ -204,9 +283,13 @@ class ExperimentConfig(_Strict):
         assert self.baseline is not None
         return self.baseline
 
+    @property
+    def source_path(self) -> Path | None:
+        return self._source
+
 
 def _normalize_legacy(data: dict[str, Any]) -> dict[str, Any]:
-    """Accept a few deprecated keys from the earlier anbench YAML shape."""
+    """Accept deprecated keys from earlier YAML shapes and migrate cursor budget knobs."""
     data = dict(data)
     if "arms" in data and "variants" not in data:
         variants: dict[str, Any] = {}
@@ -226,6 +309,27 @@ def _normalize_legacy(data: dict[str, Any]) -> dict[str, Any]:
         data["network"] = "open" if data.pop("open_agent_network") else "restricted"
     else:
         data.pop("open_agent_network", None)
+
+    # Migrate Cursor-specific budget keys into agent.plugin; rename stop_on_credit_billing.
+    budget = dict(data.get("budget") or {})
+    agent_raw = data.get("agent")
+    agent: dict[str, Any] = dict(agent_raw) if isinstance(agent_raw, dict) else {"name": "cursor-cli"}
+    plugin_raw = agent.get("plugin") or {}
+    plugin: dict[str, Any] = dict(plugin_raw) if isinstance(plugin_raw, dict) else {}
+    moved = False
+    for key in ("included_models", "allow_non_included_models"):
+        if key in budget and key not in plugin:
+            plugin[key] = budget.pop(key)
+            moved = True
+    if "stop_on_credit_billing" in budget:
+        sob = budget.pop("stop_on_credit_billing")
+        if "stop_on_billed_cost" not in budget:
+            budget["stop_on_billed_cost"] = sob
+    if moved or plugin:
+        agent = {**agent, "plugin": plugin}
+        data["agent"] = agent
+    if budget or "budget" in data:
+        data["budget"] = budget
     return data
 
 

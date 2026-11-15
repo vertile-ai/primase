@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+from ..agents import get_agent
 from ..collect import collect_job, job_complete
 from ..registry import read_task_toml
 from ..schema import TrialResult, TrialSpec
+from ..toml_edit import apply_overrides
 
 NetworkMode = Literal["open", "restricted"]
 
@@ -26,7 +29,7 @@ class RunContext:
     task_dir: Path
     model_harness_name: str
     agent: str
-    agent_kwargs: dict[str, str] = field(default_factory=dict)
+    agent_kwargs: dict[str, Any] = field(default_factory=dict)
     agent_timeout_multiplier: float | None = None
     env: str = "docker"
     network: NetworkMode = "open"
@@ -37,6 +40,7 @@ class RunContext:
     prebuild: list[str] = field(default_factory=list)
     require_paths: list[str] = field(default_factory=list)
     image_prefix: str | None = None
+    task_toml_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -85,8 +89,11 @@ class Backend(ABC):
         msgs.append(
             f"image={img or 'build:environment/'} network={ctx.network} "
             f"task_network={env.get('network_mode', 'default')} "
-            f"agent_timeout={agent_to}s x{mult or 1} = {round((agent_to or 0) * (mult or 1))}s"
+            f"agent_timeout={agent_to}s x{mult or 1} = {round((agent_to or 0) * (mult or 1))}s "
+            f"agent={ctx.agent}"
         )
+        if ctx.task_toml_overrides:
+            msgs.append(f"task_toml overrides: {list(ctx.task_toml_overrides)}")
         for rel in ctx.require_paths:
             if not (ctx.task_dir / rel).exists():
                 ok = False
@@ -100,7 +107,7 @@ class Backend(ABC):
         return job_complete(self.job_dir(spec, ctx))
 
     def collect(self, spec: TrialSpec, ctx: RunContext) -> list[TrialResult]:
-        rows = collect_job(self.job_dir(spec, ctx), self.name)
+        rows = collect_job(self.job_dir(spec, ctx), self.name, preferred_agent=spec.agent)
         out: list[TrialResult] = []
         for r in rows:
             r = r.model_copy(
@@ -125,7 +132,7 @@ class Backend(ABC):
             subprocess.run(raw, shell=True, check=True, cwd=cwd)
 
     def prepare_run(self, spec: TrialSpec, ctx: RunContext) -> None:
-        """Hook before launching: move incomplete jobs aside, run prebuild/setup, restore images."""
+        """Hook before launching: move incomplete jobs aside, run prebuild/setup, restore images, overlays."""
         job = self.job_dir(spec, ctx)
         if job.exists() and not job_complete(job):
             n = 1
@@ -138,6 +145,40 @@ class Backend(ABC):
             self.run_hooks(ctx.setup, ctx.task_dir)
         if ctx.image_prefix:
             self._restore_prebuilt(ctx.task_dir, ctx.image_prefix)
+        if ctx.task_toml_overrides:
+            overlay = self._task_overlay(spec, ctx, ctx.task_toml_overrides)
+            if overlay is not None:
+                ctx.task_dir = overlay
+
+    def _task_overlay(
+        self,
+        spec: TrialSpec,
+        ctx: RunContext,
+        overrides: dict[str, dict[str, Any]],
+        extra_mutate: Any | None = None,
+    ) -> Path | None:
+        """Create a per-trial task dir overlay with task.toml patches (symlinks for other files)."""
+        src = ctx.task_dir
+        toml_path = src / "task.toml"
+        if not toml_path.exists():
+            return None
+        original = toml_path.read_text()
+        patched, notes = apply_overrides(original, overrides)
+        if extra_mutate is not None:
+            patched, extra_notes = extra_mutate(patched)
+            notes = list(notes) + list(extra_notes)
+        if not notes and patched == original:
+            return None
+        dest = ctx.jobs_dir / ".overlays" / spec.job_name
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True)
+        for child in src.iterdir():
+            if child.name == "task.toml":
+                continue
+            os.symlink(child, dest / child.name)
+        (dest / "task.toml").write_text(patched)
+        return dest
 
     @staticmethod
     def _restore_prebuilt(task_dir: Path, image_prefix: str) -> None:
@@ -153,7 +194,11 @@ class Backend(ABC):
             subprocess.run(["docker", "tag", keep, img], capture_output=True)
 
     def _agent_args(self, ctx: RunContext, kw_flag: str) -> list[str]:
+        try:
+            kwargs = get_agent(ctx.agent).harbor_kwargs(ctx.agent_kwargs)
+        except KeyError:
+            kwargs = {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in ctx.agent_kwargs.items()}
         args: list[str] = []
-        for k, v in ctx.agent_kwargs.items():
-            args += [kw_flag, f"{k}={v if isinstance(v, str) else json.dumps(v)}"]
+        for k, v in kwargs.items():
+            args += [kw_flag, f"{k}={v}"]
         return args

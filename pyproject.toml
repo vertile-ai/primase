@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "primase"
-version = "0.1.1"
+version = "0.2.0"
 description = "Primase: a unified, resumable benchmark harness over Harbor, Pier, and pluggable backends."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -41,6 +41,12 @@ primase = "primase.cli:main"
 [project.entry-points."primase.backends"]
 harbor = "primase.backends.harbor:HarborBackend"
 pier = "primase.backends.pier:PierBackend"
+
+[project.entry-points."primase.agents"]
+cursor-cli = "primase.agents.cursor_cli:CursorCliPlugin"
+claude-code = "primase.agents.claude_code:ClaudeCodePlugin"
+codex = "primase.agents.codex:CodexPlugin"
+noop = "primase.agents.noop:NoopPlugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/primase"]

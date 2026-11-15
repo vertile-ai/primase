@@ -22,12 +22,16 @@ Please keep changes to the harness generic. Suites, tasks, and experiment YAMLs
 belong in the benchmark repository that *depends on* primase, not in this repo
 (beyond the tiny `examples/minimal/` illustration).
 
-## Backends
+## Backends and agents
 
 Harbor is the primary built-in backend. Pier is kept as an optional extra for
 callers who still need it; new work should prefer Harbor. To add another runner,
 see [docs/backends.md](docs/backends.md) and register an entry point in the
 `primase.backends` group.
+
+To add another agent CLI, see [docs/agents.md](docs/agents.md) and register an
+entry point in the `primase.agents` group. Keep product-specific budget policy
+on the plugin (`agent.plugin`), not in core.
 
 ## Secrets
 

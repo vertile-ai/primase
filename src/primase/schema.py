@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 
 Status = Literal["passed", "failed", "error", "missing"]
 
@@ -102,7 +102,7 @@ class TrialResult(BaseModel):
     cost_source: str | None = Field(
         None,
         description=(
-            "cursor_cli / claude_code / codex = reported by the agent CLI (treated as billed); "
+            "cursor_cli / claude_code / codex / noop = reported by the agent CLI (treated as billed); "
             "cursor_pricing / litellm = price-table estimate, not a bill"
         ),
     )
@@ -123,6 +123,21 @@ class TrialResult(BaseModel):
     agent_setup_s: float | None = None
     agent_s: float | None = None
     verifier_s: float | None = None
+    # provenance / reproducibility
+    primase_version: str | None = None
+    primase_git_sha: str | None = None
+    harbor_version: str | None = None
+    pier_version: str | None = None
+    config_hash: str | None = None
+    variant_def: dict[str, Any] | None = Field(None, description="resolved variant definition used for this trial")
+    variant_hash: str | None = None
+    task_content_hash: str | None = None
+    docker_image: str | None = None
+    docker_image_digest: str | None = None
+    network_mode: str | None = None
+    trajectory_path: str | None = None
+    agent_log_path: str | None = None
+    verifier_path: str | None = None
     # hygiene
     secret_files_scrubbed: int = 0
 
