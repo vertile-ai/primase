@@ -1,4 +1,4 @@
-"""`primase` CLI: plan | validate | run | collect | report | scan-secrets."""
+"""`primase` CLI: plan | validate | run | collect | report | export | verify | scan-secrets."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import ExperimentConfig, load_config
+from .export import export_bundle, load_rows_from_bundle, verify_bundle
 from .orchestrator import Orchestrator, PlannedTrial, plan
 from .report import markdown, write_csv
 from .schema import TrialResult
@@ -44,6 +45,7 @@ def _filter(trials: list[PlannedTrial], args: argparse.Namespace) -> list[Planne
             and (not args.task or s.task in args.task.split(","))
             and (not args.model or s.model in args.model.split(","))
             and (not variant or s.variant in variant.split(","))
+            and (not getattr(args, "agent", None) or s.agent in args.agent.split(","))
             and (not args.trial or s.trial_index in [int(x) for x in args.trial.split(",")])
         )
 
@@ -58,6 +60,17 @@ def _report(cfg: ExperimentConfig, rows: list[TrialResult], notes: list[str] | N
     return csv_p, md_p
 
 
+def _add_filter_flags(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("--suite")
+    sp.add_argument("--task")
+    sp.add_argument("--model")
+    sp.add_argument("--variant")
+    sp.add_argument("--arm", help="deprecated alias for --variant")
+    sp.add_argument("--agent", help="filter by agent name")
+    sp.add_argument("--trial")
+    sp.add_argument("-v", "--verbose", action="store_true")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="primase", description=__doc__)
     ap.add_argument("--version", action="version", version=__version__)
@@ -65,17 +78,26 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("plan", "validate", "run", "collect", "report"):
         sp = sub.add_parser(name)
         sp.add_argument("config")
-        sp.add_argument("--suite")
-        sp.add_argument("--task")
-        sp.add_argument("--model")
-        sp.add_argument("--variant")
-        sp.add_argument("--arm", help="deprecated alias for --variant")
-        sp.add_argument("--trial")
-        sp.add_argument("-v", "--verbose", action="store_true")
+        _add_filter_flags(sp)
         if name == "run":
             sp.add_argument("--force", action="store_true", help="re-run trials even if complete")
             sp.add_argument("--dry-run", action="store_true", help="print commands only")
             sp.add_argument("--max-trials", type=int, help="hard cap on the number of trials launched")
+
+    ex = sub.add_parser("export", help="export a redacted, publishable results bundle")
+    ex.add_argument("config")
+    ex.add_argument(
+        "-o",
+        "--output",
+        help="bundle directory (default: results/<name>/bundle)",
+    )
+    _add_filter_flags(ex)
+
+    vf = sub.add_parser("verify", help="verify a results bundle (hashes + optional config re-check)")
+    vf.add_argument("bundle", help="path to an exported bundle directory")
+    vf.add_argument("--config", help="re-hash this experiment YAML and compare to the manifest")
+    vf.add_argument("-v", "--verbose", action="store_true")
+
     sc = sub.add_parser(
         "scan-secrets", help="exit 1 if any secret value (from env/env-file) or prefix occurs under PATHs"
     )
@@ -113,6 +135,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"needles": len(needles), "hits": hits}, indent=2))
         return 1 if hits else 0
 
+    if args.cmd == "verify":
+        problems = verify_bundle(Path(args.bundle), check_config=Path(args.config) if args.config else None)
+        if problems:
+            print(json.dumps({"ok": False, "problems": problems}, indent=2))
+            return 1
+        rows = load_rows_from_bundle(Path(args.bundle))
+        print(json.dumps({"ok": True, "n_trials": len(rows), "bundle": str(args.bundle)}, indent=2))
+        return 0
+
     cfg = load_config(args.config)
     secrets = SecretStore.load(cfg.secrets, cfg.env_file_path)
     _setup_logging(secrets.redactor, args.verbose)
@@ -122,11 +153,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "plan":
         for n in notes:
             print(f"# {n}")
-        print(f"# network={cfg.resolved_network()}")
+        print(f"# network={cfg.resolved_network()} config_hash={cfg.config_hash()}")
         for p in trials:
             print(
                 f"{p.spec.trial_id}  {p.spec.backend:6} {p.spec.suite}/{p.spec.task} [{p.spec.tier}] "
-                f"model={p.spec.model} variant={p.spec.variant}(dir={p.spec.variant_dir}) "
+                f"agent={p.spec.agent} model={p.spec.model} variant={p.spec.variant}(dir={p.spec.variant_dir}) "
                 f"t{p.spec.trial_index}  → {p.spec.job_name}"
             )
         print(f"# {len(trials)} trials; secrets: {secrets.describe()}")
@@ -139,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
             bad += not v.ok
             print(
                 f"{'OK ' if v.ok else 'BAD'} {p.spec.backend:6} {p.spec.suite}/{p.spec.task} "
-                f"{p.spec.variant}: {'; '.join(v.messages)}"
+                f"{p.spec.variant}/{p.spec.agent}: {'; '.join(v.messages)}"
             )
         print(f"# {len(trials) - bad}/{len(trials)} valid; secrets: {secrets.describe()}")
         return 1 if bad else 0
@@ -162,6 +193,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"wrote {csv_p}\nwrote {md_p}")
         return 3 if abort else 0
+
+    if args.cmd == "export":
+        rows = orch.collect_all(trials)
+        # also try loading from existing CSV if collect is empty
+        if not rows and (cfg.results_path / "trials.csv").exists():
+            import csv
+
+            csv_path = cfg.results_path / "trials.csv"
+            with csv_path.open(newline="") as csv_file:
+                for rec in csv.DictReader(csv_file):
+                    # coerce empty strings to None for optional fields
+                    clean = {k: (v if v != "" else None) for k, v in rec.items()}
+                    rows.append(TrialResult.model_validate(clean))
+        out = Path(args.output) if args.output else cfg.results_path / "bundle"
+        path = export_bundle(cfg, rows, out, secrets=secrets)
+        print(f"exported {len(rows)} trials → {path}")
+        return 0
 
     rows = orch.collect_all(trials)
     csv_p, md_p = _report(cfg, rows)

@@ -54,6 +54,7 @@ def test_markdown_and_csv(fixtures, tmp_path):
     md = markdown([a, b], "t", baseline="control")
     assert "| tb | composer-2.5 | treatment | 100% | 100% | ok |" in md
     assert "-50.0%" in md  # 1800 → 900 tokens
+    assert "95% CI" in md
     p = write_csv([a, b], tmp_path / "x.csv")
     assert p.read_text().splitlines()[0].startswith("schema_version,experiment,trial_id,job_name")
 

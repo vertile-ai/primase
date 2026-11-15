@@ -27,7 +27,8 @@ def test_variant_dir_env_hooks_and_require_paths(bench_root):
         "tiers": ["low"],
         "suites": [{"id": "ds"}],
         "secrets": [],
-        "budget": {"allow_non_included_models": True},
+        "agent": {"plugin": {"allow_non_included_models": True}},
+        "budget": {},
         "variants": {
             "control": {"dir": "control"},
             "treatment": {

@@ -30,7 +30,7 @@ def test_harbor_trial_with_stream(fixtures):
     assert r.n_turns == 2 and r.n_tool_calls == 2
     assert r.duration_s == 600 and r.agent_s == 300 and r.verifier_s == 150
     assert r.model == "composer-2.5" and r.task == "react-lead-form"
-    assert r.schema_version == "1.0"
+    assert r.schema_version == "2.0"
 
 
 def test_cli_reported_cost_marks_billing(fixtures):

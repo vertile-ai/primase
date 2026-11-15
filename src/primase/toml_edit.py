@@ -1,8 +1,10 @@
-"""Minimal TOML table-key edits. Used to overlay Harbor task.toml network policy."""
+"""Minimal TOML table-key edits. Used to overlay Harbor task.toml network policy and variant overrides."""
 
 from __future__ import annotations
 
+import json
 import re
+from typing import Any
 
 _TABLE = re.compile(r"^\[([^\]]+)\]\s*$")
 _KEY = re.compile(r"^([A-Za-z0-9_-]+)\s*=")
@@ -43,13 +45,29 @@ def get_table_key(text: str, table: str, key: str) -> str | None:
     return None
 
 
-def set_table_key(text: str, table: str, key: str, value: str) -> str:
-    """Set ``key = "value"`` inside ``[table]``, creating the table if needed.
+def _format_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value) if value != int(value) else f"{value:.1f}"
+    if isinstance(value, str):
+        return json.dumps(value)
+    if value is None:
+        return '""'
+    if isinstance(value, (list, dict)):
+        return json.dumps(value)
+    return json.dumps(str(value))
+
+
+def set_table_key(text: str, table: str, key: str, value: Any) -> str:
+    """Set ``key = <value>`` inside ``[table]``, creating the table if needed.
 
     Nested tables such as ``[agent.env]`` are left alone. Existing comments and
-    other keys in the target table are preserved.
+    other keys in the target table are preserved. *value* may be str/int/float/bool.
     """
-    quoted = f'{key} = "{value}"'
+    rendered = f"{key} = {_format_value(value)}"
     spans = iter_tables(text)
     for name, start, end in spans:
         if name != table:
@@ -63,17 +81,31 @@ def set_table_key(text: str, table: str, key: str, value: str) -> str:
             km = _KEY.match(stripped)
             if not stripped.startswith("#") and km and km.group(1) == key:
                 nl = "\n" if line.endswith("\n") else ""
-                out.append(quoted + nl)
+                out.append(rendered + nl)
                 replaced = True
             else:
                 out.append(line)
         if not replaced:
-            # insert after any leading blank lines
-            insert = quoted + "\n"
+            insert = rendered + "\n"
             if out and not out[-1].endswith("\n"):
                 out[-1] += "\n"
             out.append(insert)
         return text[:start] + "".join(out) + text[end:]
     # table missing: append
     sep = "" if text.endswith("\n") or not text else "\n"
-    return f"{text}{sep}[{table}]\n{quoted}\n"
+    return f"{text}{sep}[{table}]\n{rendered}\n"
+
+
+def apply_overrides(text: str, overrides: dict[str, dict[str, Any]]) -> tuple[str, list[str]]:
+    """Apply ``{table: {key: value}}`` overrides. Returns (new_text, notes)."""
+    notes: list[str] = []
+    out = text
+    for table, keys in overrides.items():
+        for key, value in keys.items():
+            prev = get_table_key(out, table, key)
+            out = set_table_key(out, table, key, value)
+            if prev is not None:
+                notes.append(f"{table}.{key} {prev!r} -> {value!r}")
+            else:
+                notes.append(f"{table}.{key} set to {value!r}")
+    return out, notes

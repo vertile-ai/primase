@@ -24,7 +24,8 @@ def _cfg(root, environ=None, **over):
             "treatment": {"dir": "treatment", "require_paths": ["environment/extra-layer"]},
         },
         "baseline": "control",
-        "budget": {"included_models": ["composer-2.5", "grok-4.7-*"]},
+        "agent": {"name": "cursor-cli", "plugin": {"included_models": ["composer-2.5", "grok-4.7-*"]}},
+        "budget": {},
     }
     data.update(over)
     p = root / "experiments" / "e.yaml"
@@ -50,6 +51,20 @@ def test_plan_tiers_and_ids(bench_root):
 def test_model_not_included_rejected(bench_root):
     with pytest.raises(Exception, match="included_models"):
         _cfg(bench_root, models=[{"id": "claude-opus-5-high"}])
+
+
+def test_legacy_budget_included_models_migrates(bench_root):
+    """Old budget.included_models / stop_on_credit_billing still load via migration."""
+    cfg = _cfg(
+        bench_root,
+        agent={"name": "cursor-cli"},
+        budget={
+            "included_models": ["composer-2.5", "grok-4.7-*"],
+            "stop_on_credit_billing": True,
+        },
+    )
+    assert cfg.agent.plugin["included_models"] == ["composer-2.5", "grok-4.7-*"]
+    assert cfg.budget.stop_on_billed_cost is True
 
 
 def test_unknown_key_rejected(bench_root):
@@ -106,7 +121,8 @@ def test_legacy_arms_alias(bench_root):
         "suites": [{"id": "ds"}],
         "arms": {"A": {"variant": "control"}, "B": {"variant": "treatment"}},
         "baseline_arm": "A",
-        "budget": {"allow_non_included_models": True},
+        "budget": {},
+        "agent": {"name": "cursor-cli", "plugin": {"allow_non_included_models": True}},
     }
     p = bench_root / "experiments" / "legacy.yaml"
     p.write_text(yaml.safe_dump(data))

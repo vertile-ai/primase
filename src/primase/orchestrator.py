@@ -10,9 +10,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
+from .agents import billed_cost_sources, budget_hooks_for
 from .backends import RunContext, Validation, get_backend
 from .budget import BudgetExceeded, BudgetGuard
 from .config import ExperimentConfig, VariantSpec
+from .provenance import build_provenance
 from .registry import Registry
 from .schema import TrialResult, TrialSpec
 from .secrets import SecretStore
@@ -25,6 +27,7 @@ class PlannedTrial:
     spec: TrialSpec
     ctx: RunContext
     variant: VariantSpec
+    variant_name: str
 
 
 def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[list[PlannedTrial], list[str]]:
@@ -43,9 +46,11 @@ def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[
             notes.append(f"skip {s.id}/{t.task}: tier {t.tier} not in {cfg.tiers}")
         for trial in range(1, cfg.trials + 1):
             for t in sel:
-                for m in cfg.models:
-                    for vname, v in cfg.variants.items():
-                        vdir = v.directory_name(vname)
+                for vname, v in cfg.variants.items():
+                    agent = v.resolved_agent(cfg.agent)
+                    models = cfg.models_for_variant(v)
+                    vdir = v.directory_name(vname)
+                    for m in models:
                         spec = TrialSpec(
                             experiment=cfg.name,
                             suite=s.id,
@@ -56,15 +61,15 @@ def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[
                             variant=vname,
                             variant_dir=vdir,
                             trial_index=trial,
-                            agent=cfg.agent.name,
+                            agent=agent.name,
                         )
                         ctx = RunContext(
                             root=cfg.root_dir,
                             jobs_dir=cfg.jobs_path,
                             task_dir=reg.variant_dir(s.id, vdir, t.task),
                             model_harness_name=m.harness_name,
-                            agent=cfg.agent.name,
-                            agent_kwargs=dict(cfg.agent.kwargs),
+                            agent=agent.name,
+                            agent_kwargs=dict(agent.kwargs),
                             agent_timeout_multiplier=s.agent_timeout_multiplier or cfg.agent_timeout_multiplier,
                             env=cfg.env,
                             network=network,
@@ -75,8 +80,9 @@ def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[
                             prebuild=list(v.prebuild),
                             require_paths=list(v.require_paths),
                             image_prefix=v.image_prefix,
+                            task_toml_overrides={k: dict(val) for k, val in v.task_toml.items()},
                         )
-                        planned.append(PlannedTrial(spec, ctx, v))
+                        planned.append(PlannedTrial(spec, ctx, v, vname))
     return planned, notes
 
 
@@ -85,11 +91,26 @@ class Orchestrator:
         self.cfg = cfg
         self.secrets = secrets
         self.redact = secrets.redactor
-        self.guard = BudgetGuard(cfg.budget)
+        hooks = budget_hooks_for(cfg.agent.name, cfg.agent.plugin)
+        # also include hooks from any variant-level agent override
+        seen = {id(h) for h in hooks}
+        for v in cfg.variants.values():
+            if v.agent is not None:
+                for h in budget_hooks_for(v.resolved_agent(cfg.agent).name, v.resolved_agent(cfg.agent).plugin):
+                    if id(h) not in seen:
+                        hooks.append(h)
+                        seen.add(id(h))
+        self.guard = BudgetGuard(cfg.budget, hooks=hooks, billed_sources=billed_cost_sources())
         self.out = cfg.results_path
         self.out.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        # persist resolved config for reproducibility
+        resolved = self.out / "config.resolved.yaml"
+        if not resolved.exists():
+            import yaml
+
+            resolved.write_text(yaml.safe_dump(cfg.canonical_dict(), sort_keys=False))
 
     def _ledger(self, event: dict[str, object]) -> None:
         with self._lock, (self.out / "ledger.jsonl").open("a") as f:
@@ -110,12 +131,38 @@ class Orchestrator:
             out.append((p, b.validate(p.spec, p.ctx)))
         return out
 
+    def _annotate(self, p: PlannedTrial, rows: list[TrialResult]) -> list[TrialResult]:
+        b = get_backend(p.spec.backend, p.ctx.root)
+        job = b.job_dir(p.spec, p.ctx)
+        trial_dirs = sorted(d for d in job.iterdir() if d.is_dir() and "__" in d.name) if job.is_dir() else []
+        prov = build_provenance(
+            cfg=self.cfg,
+            variant_name=p.variant_name,
+            variant=p.variant,
+            task_dir=p.ctx.task_dir,
+            trial_dir=trial_dirs[0] if trial_dirs else None,
+            backend=p.spec.backend,
+            network=p.ctx.network,
+            harbor_bin=b.binary if p.spec.backend == "harbor" else None,
+            pier_bin=b.binary if p.spec.backend == "pier" else None,
+        )
+        out: list[TrialResult] = []
+        for i, r in enumerate(rows):
+            td = trial_dirs[i] if i < len(trial_dirs) else (trial_dirs[0] if trial_dirs else None)
+            extra = dict(prov)
+            if td is not None:
+                from .provenance import artifact_paths
+
+                extra.update(artifact_paths(td))
+            out.append(r.model_copy(update=extra))
+        return out
+
     def run_one(self, p: PlannedTrial, force: bool = False) -> list[TrialResult]:
         b = get_backend(p.spec.backend, p.ctx.root)
         job = b.job_dir(p.spec, p.ctx)
         if b.is_complete(p.spec, p.ctx) and not force:
             log.info("resume: %s already complete – skipping", p.spec.job_name)
-            return b.collect(p.spec, p.ctx)
+            return self._annotate(p, b.collect(p.spec, p.ctx))
         if self._stop.is_set():
             return []
         self.guard.check_model(p.spec.model)
@@ -145,6 +192,7 @@ class Orchestrator:
             rc = proc.wait()
         scrubbed = self.redact.scrub_tree(job) if job.exists() else []
         rows = [r.model_copy(update={"secret_files_scrubbed": len(scrubbed)}) for r in b.collect(p.spec, p.ctx)]
+        rows = self._annotate(p, rows)
         self._ledger(
             {
                 "event": "end",
@@ -174,6 +222,7 @@ class Orchestrator:
                     exception=f"runner exit {rc}",
                 )
             ]
+            rows = self._annotate(p, rows)
         return rows
 
     def run(self, trials: list[PlannedTrial], force: bool = False) -> tuple[list[TrialResult], str | None]:
@@ -206,5 +255,6 @@ class Orchestrator:
     def collect_all(self, trials: list[PlannedTrial]) -> list[TrialResult]:
         rows: list[TrialResult] = []
         for p in trials:
-            rows.extend(get_backend(p.spec.backend, p.ctx.root).collect(p.spec, p.ctx))
+            collected = get_backend(p.spec.backend, p.ctx.root).collect(p.spec, p.ctx)
+            rows.extend(self._annotate(p, collected))
         return rows

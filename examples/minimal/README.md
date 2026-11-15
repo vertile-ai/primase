@@ -1,14 +1,14 @@
-# Minimal experiment
+# Minimal experiment sketch
 
-A toy layout showing the YAML primase expects. It is not a real benchmark
-(no tasks, no images). Copy the shape into your own benchmark repository.
+This directory is an illustration of a primase 0.2 experiment YAML. There is no
+task checkout here — copy the shape into your benchmark repository.
 
-```text
-examples/minimal/
-  experiment.yaml
-  suites.json
+```bash
+# from a real benchmark root that has Harbor installed:
+primase plan     path/to/experiment.yaml
+primase validate path/to/experiment.yaml
+primase export   path/to/experiment.yaml -o results/demo/bundle
+primase verify   results/demo/bundle --config path/to/experiment.yaml
 ```
 
-`root: .` means "this directory is the benchmark root". In a real repo `root`
-usually points at the directory that contains `suites.json` and
-`work/variants/`.
+See [docs/config.md](../../docs/config.md) and [docs/agents.md](../../docs/agents.md).

@@ -2,6 +2,7 @@ import os
 
 import pytest
 
+from primase.agents.cursor_cli import IncludedModelsHook
 from primase.budget import BudgetExceeded, BudgetGuard
 from primase.config import BudgetSpec
 from primase.schema import TrialResult
@@ -59,6 +60,9 @@ def test_budget_zero_reported_cost_ok_and_estimate_cap():
         g.observe(_t(cost_usd=0.6, cost_source="cursor_pricing"))
 
 
-def test_included_models():
-    b = BudgetSpec(included_models=["composer-2.5", "grok-4.7-high"])
-    assert b.model_allowed("grok-4.7-high") and not b.model_allowed("claude-opus-5-high")
+def test_included_models_hook():
+    h = IncludedModelsHook(["composer-2.5", "grok-4.7-high"])
+    h.check_model("grok-4.7-high")
+    with pytest.raises(BudgetExceeded, match="included_models"):
+        h.check_model("claude-opus-5-high")
+    IncludedModelsHook(["composer-2.5"], allow_non_included=True).check_model("anything")

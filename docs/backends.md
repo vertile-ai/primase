@@ -26,13 +26,14 @@ class MyBackend(Backend):
 ```
 
 `RunContext` already carries variant env, setup/prebuild hooks, `require_paths`,
-`image_prefix`, and the resolved `network` mode (`open` or `restricted`). Use
-them; do not hard-code a particular product or benchmark.
+`image_prefix`, `task_toml_overrides`, agent kwargs, and the resolved `network`
+mode (`open` or `restricted`). Use them; do not hard-code a particular product
+or benchmark.
 
-The default `collect()` assumes the Harbor/Pier trial layout (`result.json`,
-`agent/cursor-cli.txt`, `agent/claude-code.txt`, `agent/sessions/**`,
-`agent/trajectory.json`). If your runner writes something else, override
-`collect()` and/or add a parser in `primase.collect`.
+The default `collect()` assumes the Harbor/Pier trial layout and delegates agent
+log parsing to the `primase.agents` plugin registry. If your runner writes
+something else, override `collect()` and/or add an agent plugin (see
+[agents.md](agents.md)).
 
 ## Registration
 

@@ -62,7 +62,8 @@ def test_harbor_prepare_run_overlay(bench_root, tmp_path):
         "tiers": ["medium"],
         "suites": [{"id": "tb"}],
         "variants": {"control": {"dir": "control"}},
-        "budget": {"allow_non_included_models": True},
+        "agent": {"plugin": {"allow_non_included_models": True}},
+        "budget": {},
         "network": "open",
     }
     p = bench_root / "experiments" / "net.yaml"

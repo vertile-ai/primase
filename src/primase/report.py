@@ -6,11 +6,14 @@ Rules:
   * token/time deltas only over (suite, task, model) where BOTH variants have >=1 passing
     trial; per variant the median over passing trials, then delta% = (V - baseline) / baseline;
     the summary shows the median of per-task deltas.
+  * N-arm: every non-baseline variant is paired against the baseline independently.
+  * Optional bootstrap CI on the median of per-task delta% (cheap, deterministic seed).
 """
 
 from __future__ import annotations
 
 import csv
+import random
 import statistics
 from collections import defaultdict
 from collections.abc import Iterable
@@ -47,6 +50,33 @@ def write_csv(rows: Iterable[TrialResult], path: Path) -> Path:
 def _median(xs: list[Any]) -> float | None:
     xs = [x for x in xs if x is not None]
     return statistics.median(xs) if xs else None
+
+
+def bootstrap_ci(
+    values: list[float],
+    *,
+    n_boot: int = 1000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> tuple[float | None, float | None, float | None]:
+    """Return (median, lo, hi) of a percentile bootstrap CI on the median. Cheap & deterministic."""
+    vals = [v for v in values if v is not None]
+    if not vals:
+        return None, None, None
+    med = statistics.median(vals)
+    if len(vals) == 1:
+        return med, med, med
+    rng = random.Random(seed)
+    samples: list[float] = []
+    n = len(vals)
+    for _ in range(n_boot):
+        draw = [vals[rng.randrange(n)] for _ in range(n)]
+        samples.append(statistics.median(draw))
+    samples.sort()
+    lo_i = int(alpha / 2 * n_boot)
+    hi_i = int((1 - alpha / 2) * n_boot) - 1
+    hi_i = max(0, min(hi_i, n_boot - 1))
+    return med, samples[lo_i], samples[hi_i]
 
 
 def pass_rates(rows: list[TrialResult]) -> dict[tuple[str, str, str], tuple[int, int]]:
@@ -115,6 +145,33 @@ def paired_deltas(rows: list[TrialResult], baseline: str = "control") -> list[di
     return out
 
 
+def summary_delta_cis(
+    deltas: list[dict[str, Any]],
+    metric: str = "total_tokens_delta_pct",
+) -> list[dict[str, Any]]:
+    """Per (model, variant) median-of-task-deltas with bootstrap CI."""
+    grp: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for d in deltas:
+        v = d.get(metric)
+        if v is not None:
+            grp[(d["model"], d["variant"])].append(float(v))
+    out: list[dict[str, Any]] = []
+    for (model, variant), vals in sorted(grp.items()):
+        med, lo, hi = bootstrap_ci(vals, seed=hash((model, variant, metric)) & 0xFFFFFFFF)
+        out.append(
+            {
+                "model": model,
+                "variant": variant,
+                "metric": metric,
+                "n_tasks": len(vals),
+                "median": med,
+                "ci_lo": lo,
+                "ci_hi": hi,
+            }
+        )
+    return out
+
+
 def _fmt(v: Any, pct: bool = False) -> str:
     if v is None:
         return "–"
@@ -129,14 +186,25 @@ def markdown(rows: list[TrialResult], title: str, baseline: str = "control", not
     lines = [f"# {title}", ""]
     if notes:
         lines += [f"> {n}" for n in notes] + [""]
+    variants = sorted({r.variant or "?" for r in rows})
     lines += [
+        f"Baseline: `{baseline}` · variants: {', '.join(f'`{v}`' for v in variants)}",
+        "",
         "## Pass rate",
         "",
-        "| suite | model | variant | passed / trials | rate |",
-        "|---|---|---|---|---|",
+        "| suite | model | variant | agent | passed / trials | rate |",
+        "|---|---|---|---|---|---|",
     ]
+    # agent lookup per (suite, model, variant)
+    agent_of: dict[tuple[str, str, str], str] = {}
+    for r in rows:
+        agent_of[(r.suite or "?", r.model or "?", r.variant or "?")] = r.agent or "–"
     for (s, m, v), (p, n) in sorted(pass_rates(rows).items()):
-        lines.append(f"| {s} | {m} | {v} | {p} / {n} | {p / n:.0%} |" if n else f"| {s} | {m} | {v} | 0 / 0 | – |")
+        agent = agent_of.get((s, m, v), "–")
+        if n:
+            lines.append(f"| {s} | {m} | {v} | {agent} | {p} / {n} | {p / n:.0%} |")
+        else:
+            lines.append(f"| {s} | {m} | {v} | {agent} | 0 / 0 | – |")
     regs = regressions(rows, baseline)
     if regs:
         lines += [
@@ -146,10 +214,10 @@ def markdown(rows: list[TrialResult], title: str, baseline: str = "control", not
             "| suite | model | variant | baseline | variant | verdict |",
             "|---|---|---|---|---|---|",
         ]
-        for r in regs:
+        for reg in regs:
             lines.append(
-                f"| {r['suite']} | {r['model']} | {r['variant']} | {r['baseline_rate']:.0%} | "
-                f"{r['variant_rate']:.0%} | {'**REGRESSION**' if r['regression'] else 'ok'} |"
+                f"| {reg['suite']} | {reg['model']} | {reg['variant']} | {reg['baseline_rate']:.0%} | "
+                f"{reg['variant_rate']:.0%} | {'**REGRESSION**' if reg['regression'] else 'ok'} |"
             )
     deltas = paired_deltas(rows, baseline)
     lines += ["", "## Deltas over tasks both variants passed (medians over passing trials)", ""]
@@ -171,31 +239,35 @@ def markdown(rows: list[TrialResult], title: str, baseline: str = "control", not
             )
         lines += [
             "",
-            "| model | variant | tasks | median Δ tokens | median Δ agent time |",
-            "|---|---|---|---|---|",
+            "| model | variant | tasks | median Δ tokens | 95% CI | median Δ agent time | 95% CI |",
+            "|---|---|---|---|---|---|---|",
         ]
-        grp: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-        for d in deltas:
-            grp[(d["model"], d["variant"])].append(d)
-        for (m, v), ds in sorted(grp.items()):
+        tok_cis = {(c["model"], c["variant"]): c for c in summary_delta_cis(deltas, "total_tokens_delta_pct")}
+        time_cis = {(c["model"], c["variant"]): c for c in summary_delta_cis(deltas, "agent_s_delta_pct")}
+        keys = sorted(set(tok_cis) | set(time_cis))
+        for key in keys:
+            tc, ac = tok_cis.get(key), time_cis.get(key)
+            n = (tc or ac or {}).get("n_tasks", 0)
             lines.append(
-                f"| {m} | {v} | {len(ds)} | {_fmt(_median([d['total_tokens_delta_pct'] for d in ds]), True)} | "
-                f"{_fmt(_median([d['agent_s_delta_pct'] for d in ds]), True)} |"
+                f"| {key[0]} | {key[1]} | {n} | {_fmt(tc['median'] if tc else None, True)} | "
+                f"[{_fmt(tc['ci_lo'] if tc else None, True)}, {_fmt(tc['ci_hi'] if tc else None, True)}] | "
+                f"{_fmt(ac['median'] if ac else None, True)} | "
+                f"[{_fmt(ac['ci_lo'] if ac else None, True)}, {_fmt(ac['ci_hi'] if ac else None, True)}] |"
             )
     lines += [
         "",
         "## Trials",
         "",
         (  # noqa: E501
-            "| suite | task | model | variant | # | status | reward | in | out | "
+            "| suite | task | model | variant | agent | # | status | reward | in | out | "
             "cache r/w | cost (source) | turns | tools | tool-out chars | "
             "shell-out chars | agent s | total s |"
         ),
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in sorted(rows, key=lambda r: (r.suite or "", r.task, r.model or "", r.variant or "", r.trial_index or 0)):
         lines.append(
-            f"| {row.suite} | {row.task} | {row.model} | {row.variant} | {row.trial_index} | "
+            f"| {row.suite} | {row.task} | {row.model} | {row.variant} | {row.agent or '–'} | {row.trial_index} | "
             f"{row.status}{' (timeout)' if row.agent_timed_out else ''}{' (no usage)' if row.usage_missing else ''} | "
             f"{_fmt(row.reward)} | {_fmt(row.input_tokens)} | {_fmt(row.output_tokens)} | "
             f"{_fmt(row.cache_read_tokens)}/{_fmt(row.cache_write_tokens)} | "
@@ -208,9 +280,9 @@ def markdown(rows: list[TrialResult], title: str, baseline: str = "control", not
         lines += ["", "## Exceptions", ""] + [f"- `{r.job_name}`: {r.exception}" for r in errs]
     lines += [
         "",
-        "_cost source: `cursor_cli` / `claude_code` / `codex` = reported by the CLI (treated as billed); "
-        "`cursor_pricing` / `litellm` = harness price-table estimate, not a bill. "
-        "tool-output tokens ≈ chars/4._",
+        "_cost source: agent-plugin name (e.g. `cursor_cli` / `claude_code` / `codex`) = reported by the CLI "
+        "(treated as billed); `cursor_pricing` / `litellm` = harness price-table estimate, not a bill. "
+        "tool-output tokens ≈ chars/4. Bootstrap CIs use 1000 resamples of per-task median deltas._",
         "",
     ]
     return "\n".join(lines)

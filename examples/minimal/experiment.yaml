@@ -1,8 +1,11 @@
 # Tiny generic example. Not a real benchmark — there is no task checkout here.
 name: minimal-demo
-description: illustration of a primase experiment YAML
+description: illustration of a primase experiment YAML (0.2 general variants)
 root: .
-agent: {name: cursor-cli}
+agent:
+  name: cursor-cli
+  plugin:
+    allow_non_included_models: true
 models:
   - {id: composer-2.5}
 variants:
@@ -10,8 +13,16 @@ variants:
     description: baseline
     dir: control
   treatment:
-    description: experimental condition
+    description: experimental condition (env / paths)
     dir: treatment
+  # Illustrative only — shows the same override mechanism for agent config / agent / task.toml:
+  # config-b:
+  #   agent: {kwargs: {config: configs/b.json}}
+  # other-agent:
+  #   agent: {name: noop}
+  #   model: {id: none, provider_prefix: ""}
+  # long-timeout:
+  #   task_toml: {agent: {timeout_sec: 600}}
 baseline: control
 tiers: [low]
 suites:
@@ -19,4 +30,4 @@ suites:
 trials: 1
 network: open
 budget:
-  allow_non_included_models: true
+  stop_on_billed_cost: true
