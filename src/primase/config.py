@@ -48,6 +48,25 @@ class AgentSpec(_Strict):
     )
 
 
+class McpServerSpec(_Strict):
+    """One MCP server (mirrors Harbor's ``[[environment.mcp_servers]]``)."""
+
+    name: str
+    transport: Literal["stdio", "sse", "streamable-http"] = "stdio"
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    url: str | None = None
+    env: dict[str, str] = Field(default_factory=dict, description="local backend only (Harbor ignores it)")
+
+    @model_validator(mode="after")
+    def _transport_fields(self) -> McpServerSpec:
+        if self.transport == "stdio" and not self.command:
+            raise ValueError(f"mcp server {self.name!r}: stdio transport needs 'command'")
+        if self.transport != "stdio" and not self.url:
+            raise ValueError(f"mcp server {self.name!r}: {self.transport} transport needs 'url'")
+        return self
+
+
 class VariantSpec(_Strict):
     """One experimental condition — a general override bundle, not only an env patch.
 
@@ -94,6 +113,41 @@ class VariantSpec(_Strict):
         ),
     )
 
+    instruction_prepend: str | None = Field(
+        None,
+        description=(
+            "text prepended to the task's instruction.md in the per-trial overlay (e.g. tool-usage rules). "
+            "A value starting with '@' is a file path relative to root."
+        ),
+    )
+    instruction_append: str | None = Field(
+        None, description="like instruction_prepend, appended after the task instruction"
+    )
+    overlay_files: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "files/dirs copied into the per-trial task overlay: {dest relative to task dir: src relative to root}. "
+            "E.g. ship a skill, an AGENTS.md, or a Dockerfile layer that installs a tool."
+        ),
+    )
+    mcp_servers: list[McpServerSpec] = Field(
+        default_factory=list,
+        description=(
+            "MCP servers exposed to the agent for this variant. Harbor: rendered as "
+            "[[environment.mcp_servers]] in the task.toml overlay. local backend: written to an MCP config "
+            "file handed to the agent CLI."
+        ),
+    )
+
+    def has_task_overlay(self) -> bool:
+        return bool(
+            self.task_toml
+            or self.instruction_prepend
+            or self.instruction_append
+            or self.overlay_files
+            or self.mcp_servers
+        )
+
     def directory_name(self, variant_name: str) -> str:
         return self.dir or variant_name
 
@@ -112,8 +166,11 @@ class VariantSpec(_Strict):
         if self.agent is None:
             return default
         # shallow-merge plugin/kwargs so a variant can override just kwargs
+        # only switch agents when the variant names one explicitly; AgentSpec.name has a default,
+        # so `agent: {kwargs: {...}}` must keep the experiment-level agent
+        name = self.agent.name if "name" in self.agent.model_fields_set else default.name
         return AgentSpec(
-            name=self.agent.name or default.name,
+            name=name or default.name,
             kwargs={**default.kwargs, **self.agent.kwargs},
             plugin={**default.plugin, **self.agent.plugin},
         )

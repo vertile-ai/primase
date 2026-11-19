@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from ..schema import TrialSpec
 from ..toml_edit import get_table_key, set_table_key
 from .base import Backend, RunContext
@@ -75,27 +77,14 @@ class HarborBackend(Backend):
         cmd += self._agent_args(ctx, "--ak")
         return cmd + list(ctx.extra_args)
 
-    def prepare_run(self, spec: TrialSpec, ctx: RunContext) -> None:
-        # Run hooks / image restore without applying task_toml yet — we fold that into one overlay.
-        overrides = dict(ctx.task_toml_overrides)
-        ctx.task_toml_overrides = {}
-        super().prepare_run(spec, ctx)
-        ctx.task_toml_overrides = overrides
-
+    def build_overlay(self, spec: TrialSpec, ctx: RunContext) -> Path | None:
+        # task_toml overrides, MCP servers, instruction/file overlays and the open-network patch
+        # are folded into ONE overlay directory.
         need_network = ctx.network == "open"
-        if not overrides and not need_network:
-            return
+        if not ctx.task_toml_overrides and not need_network and not ctx.has_content_overlay():
+            return None
 
         def mutate(text: str) -> tuple[str, list[str]]:
-            notes: list[str] = []
-            if need_network:
-                text, n = _force_open_agent_network(text)
-                notes.extend(n)
-            return text, notes
+            return _force_open_agent_network(text) if need_network else (text, [])
 
-        overlay = self._task_overlay(spec, ctx, overrides, extra_mutate=mutate if need_network else None)
-        if overlay is not None:
-            ctx.task_dir = overlay
-        elif need_network:
-            # overrides empty but network open with no changes needed — still fine
-            pass
+        return self._task_overlay(spec, ctx, ctx.task_toml_overrides, extra_mutate=mutate)

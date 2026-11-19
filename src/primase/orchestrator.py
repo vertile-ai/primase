@@ -81,6 +81,11 @@ def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[
                             require_paths=list(v.require_paths),
                             image_prefix=v.image_prefix,
                             task_toml_overrides={k: dict(val) for k, val in v.task_toml.items()},
+                            instruction_prepend=v.instruction_prepend,
+                            instruction_append=v.instruction_append,
+                            overlay_files=dict(v.overlay_files),
+                            mcp_servers=[srv.model_dump() for srv in v.mcp_servers],
+                            model_id=m.id,
                         )
                         planned.append(PlannedTrial(spec, ctx, v, vname))
     return planned, notes

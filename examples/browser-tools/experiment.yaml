@@ -1,0 +1,38 @@
+# Browser tools as variants: same agent + model + tasks, only the browser tool changes.
+# Illustrative — point `root` at a benchmark dir with suites.json + work/variants/<suite>/shared/<task>.
+name: browser-tools-demo
+description: token cost of browser tools for agents (correctness gate first)
+root: .
+agent:
+  name: claude-code
+  kwargs:
+    disallowed_tools: [WebFetch, WebSearch]    # don't let the agent bypass the browser under test
+models:
+  - {id: claude-sonnet-4-5, provider_prefix: anthropic}
+variants:
+  agent-browser:
+    dir: shared
+    instruction_prepend: "@prompts/agent-browser.md"
+  ego-browser:
+    dir: shared
+    instruction_prepend: "@prompts/ego-browser.md"
+  playwright-mcp:
+    dir: shared
+    instruction_prepend: "@prompts/mcp.md"
+    mcp_servers:
+      - {name: playwright, command: npx, args: ["-y", "@playwright/mcp@latest", "--headless", "--isolated"]}
+  devtools-mcp:
+    dir: shared
+    instruction_prepend: "@prompts/mcp.md"
+    mcp_servers:
+      - {name: chrome-devtools, command: npx, args: ["-y", "chrome-devtools-mcp@latest", "--headless", "--isolated"]}
+baseline: agent-browser
+tiers: [low, medium]
+suites:
+  - {id: browser, backend: local}   # ego-browser is a macOS app: run every arm on the host for parity
+trials: 3
+concurrency: 1
+network: open
+budget:
+  stop_on_billed_cost: false        # Claude Code reports a cost on every run (even on a subscription); cap the total instead
+  max_reported_cost_usd: 20

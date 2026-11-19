@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .base import AgentMetrics, AgentPlugin, BudgetHook
+from .base import AgentMetrics, AgentPlugin, BudgetHook, LocalCommand, LocalInvocation, generic_local_command
 
 STREAM = "cursor-cli.txt"
 
@@ -133,6 +133,9 @@ class CursorCliPlugin(AgentPlugin):
     name = "cursor-cli"
     billed_cost_sources = frozenset({"cursor_cli"})
 
+    def local_command(self, inv: LocalInvocation) -> LocalCommand | None:
+        return _cursor_local_command(inv)
+
     def collect(self, agent_dir: Path) -> AgentMetrics:
         return parse_cursor_stream(Path(agent_dir) / STREAM)
 
@@ -143,3 +146,25 @@ class CursorCliPlugin(AgentPlugin):
         if not patterns and not allow:
             return []
         return [IncludedModelsHook(patterns, allow_non_included=allow)]
+
+
+def _cursor_local_command(inv: LocalInvocation) -> LocalCommand | None:
+    """``cursor-agent -p --output-format stream-json`` headless on the host → ``cursor-cli.txt``.
+
+    MCP servers: cursor-agent reads ``.cursor/mcp.json`` from the workspace; the local backend writes it there.
+    kwargs: ``binary`` (default ``cursor-agent``), ``force`` (default true), ``extra_args`` (list).
+    """
+    generic = generic_local_command(inv, default_stdout=STREAM)
+    if generic is not None:
+        return generic
+    kw = inv.kwargs
+    argv = [str(kw.get("binary") or "cursor-agent"), "-p", inv.instruction, "--output-format", "stream-json"]
+    if inv.model:
+        argv += ["--model", inv.model]
+    argv += ["--workspace", str(inv.workspace), "--trust"]
+    if kw.get("force", True):
+        argv += ["--force"]
+    if inv.mcp_config is not None:
+        argv += ["--approve-mcps"]
+    argv += [str(a) for a in kw.get("extra_args") or []]
+    return LocalCommand(argv=argv, stdout_file=STREAM)

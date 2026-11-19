@@ -12,7 +12,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points
 from pathlib import Path
 
-from .base import AgentMetrics, AgentPlugin, BudgetHook
+from .base import AgentMetrics, AgentPlugin, BudgetHook, LocalCommand, LocalInvocation
 from .claude_code import ClaudeCodePlugin, parse_claude_sessions, parse_claude_stream
 from .codex import CodexPlugin, parse_codex_rollouts
 from .cursor_cli import CursorCliPlugin, parse_cursor_stream, tool_output
@@ -114,6 +114,8 @@ __all__ = [
     "AgentMetrics",
     "AgentPlugin",
     "BudgetHook",
+    "LocalCommand",
+    "LocalInvocation",
     "budget_hooks_for",
     "billed_cost_sources",
     "collect_agent_metrics",

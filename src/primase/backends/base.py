@@ -15,7 +15,7 @@ from ..agents import get_agent
 from ..collect import collect_job, job_complete
 from ..registry import read_task_toml
 from ..schema import TrialResult, TrialSpec
-from ..toml_edit import apply_overrides
+from ..toml_edit import append_array_tables, apply_overrides
 
 NetworkMode = Literal["open", "restricted"]
 
@@ -41,6 +41,24 @@ class RunContext:
     require_paths: list[str] = field(default_factory=list)
     image_prefix: str | None = None
     task_toml_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    instruction_prepend: str | None = None
+    instruction_append: str | None = None
+    overlay_files: dict[str, str] = field(default_factory=dict)
+    mcp_servers: list[dict[str, Any]] = field(default_factory=list)
+    model_id: str | None = None
+
+    def has_content_overlay(self) -> bool:
+        """True when the variant changes task files beyond task.toml table keys."""
+        return bool(self.instruction_prepend or self.instruction_append or self.overlay_files or self.mcp_servers)
+
+    def resolve_text(self, value: str | None) -> str | None:
+        """``@path`` → file contents (relative to root); anything else is literal text."""
+        if not value:
+            return None
+        if value.startswith("@"):
+            path = Path(value[1:]).expanduser()
+            return (path if path.is_absolute() else self.root / path).read_text()
+        return value
 
 
 @dataclass
@@ -145,10 +163,15 @@ class Backend(ABC):
             self.run_hooks(ctx.setup, ctx.task_dir)
         if ctx.image_prefix:
             self._restore_prebuilt(ctx.task_dir, ctx.image_prefix)
-        if ctx.task_toml_overrides:
-            overlay = self._task_overlay(spec, ctx, ctx.task_toml_overrides)
-            if overlay is not None:
-                ctx.task_dir = overlay
+        overlay = self.build_overlay(spec, ctx)
+        if overlay is not None:
+            ctx.task_dir = overlay
+
+    def build_overlay(self, spec: TrialSpec, ctx: RunContext) -> Path | None:
+        """Per-trial task overlay for this backend (``None`` = run the task dir as-is)."""
+        if not ctx.task_toml_overrides and not ctx.has_content_overlay():
+            return None
+        return self._task_overlay(spec, ctx, ctx.task_toml_overrides)
 
     def _task_overlay(
         self,
@@ -157,7 +180,12 @@ class Backend(ABC):
         overrides: dict[str, dict[str, Any]],
         extra_mutate: Any | None = None,
     ) -> Path | None:
-        """Create a per-trial task dir overlay with task.toml patches (symlinks for other files)."""
+        """Create a per-trial task dir overlay (symlinks for untouched files).
+
+        Applies, in order: task.toml table-key patches, ``extra_mutate`` (e.g. network policy),
+        ``[[environment.mcp_servers]]`` blocks, instruction prepend/append, and ``overlay_files``.
+        Returns ``None`` when nothing would change.
+        """
         src = ctx.task_dir
         toml_path = src / "task.toml"
         if not toml_path.exists():
@@ -167,18 +195,62 @@ class Backend(ABC):
         if extra_mutate is not None:
             patched, extra_notes = extra_mutate(patched)
             notes = list(notes) + list(extra_notes)
-        if not notes and patched == original:
+        if ctx.mcp_servers and self.renders_mcp_into_task_toml:
+            harbor_keys = ("name", "transport", "command", "args", "url")
+            entries = [{k: s.get(k) for k in harbor_keys} for s in ctx.mcp_servers]
+            patched, mcp_notes = append_array_tables(patched, "environment.mcp_servers", entries)
+            notes = list(notes) + mcp_notes
+        instruction: str | None = None
+        pre, post = ctx.resolve_text(ctx.instruction_prepend), ctx.resolve_text(ctx.instruction_append)
+        if pre or post:
+            base = (src / "instruction.md").read_text() if (src / "instruction.md").exists() else ""
+            parts = [p.rstrip("\n") for p in (pre, base, post) if p]
+            instruction = "\n\n".join(parts) + "\n"
+        if not notes and patched == original and instruction is None and not ctx.overlay_files:
             return None
         dest = ctx.jobs_dir / ".overlays" / spec.job_name
         if dest.exists():
             shutil.rmtree(dest)
         dest.mkdir(parents=True)
         for child in src.iterdir():
-            if child.name == "task.toml":
+            if child.name == "task.toml" or (instruction is not None and child.name == "instruction.md"):
                 continue
-            os.symlink(child, dest / child.name)
+            os.symlink(child.resolve(), dest / child.name)
         (dest / "task.toml").write_text(patched)
+        if instruction is not None:
+            (dest / "instruction.md").write_text(instruction)
+        for rel_dest, rel_src in ctx.overlay_files.items():
+            self._copy_into_overlay(dest, rel_dest, ctx.root / Path(rel_src).expanduser())
         return dest
+
+    #: Harbor reads ``[[environment.mcp_servers]]``; backends that hand MCP config to the CLI set False.
+    renders_mcp_into_task_toml: bool = True
+
+    @staticmethod
+    def _copy_into_overlay(dest: Path, rel_dest: str, src: Path) -> None:
+        rel = Path(rel_dest)
+        if rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"overlay_files destination must be relative inside the task dir: {rel_dest!r}")
+        if not src.exists():
+            raise FileNotFoundError(f"overlay_files source missing: {src}")
+        # materialize any symlinked parent dirs so we never write through into the source task
+        cur = dest
+        for part in rel.parts[:-1]:
+            cur = cur / part
+            if cur.is_symlink():
+                target = cur.resolve()
+                cur.unlink()
+                shutil.copytree(target, cur, symlinks=True)
+            cur.mkdir(exist_ok=True)
+        target_path = dest / rel
+        if target_path.is_symlink() or target_path.is_file():
+            target_path.unlink()
+        elif target_path.is_dir():
+            shutil.rmtree(target_path)
+        if src.is_dir():
+            shutil.copytree(src, target_path, symlinks=True)
+        else:
+            shutil.copy2(src, target_path)
 
     @staticmethod
     def _restore_prebuilt(task_dir: Path, image_prefix: str) -> None:

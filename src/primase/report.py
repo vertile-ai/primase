@@ -1,5 +1,9 @@
 """Reports: per-trial CSV + markdown summary.
 
+Primase's question is always the same, in this order:
+  1. correctness gate — did the variant hold the baseline's pass rate?
+  2. only then — how many tokens (and how much time) did it save?
+
 Rules:
   * pass rate per (suite, model, variant); a non-baseline variant with a LOWER pass rate
     than the baseline is a regression.
@@ -13,6 +17,7 @@ Rules:
 from __future__ import annotations
 
 import csv
+import json
 import random
 import statistics
 from collections import defaultdict
@@ -25,8 +30,10 @@ from .schema import CSV_FIELDS, TrialResult
 METRICS = (
     "total_tokens",
     "prompt_tokens_total",
+    "input_tokens",
     "output_tokens",
     "cache_read_tokens",
+    "cache_write_tokens",
     "tool_output_tokens_est",
     "shell_output_tokens_est",
     "n_turns",
@@ -43,8 +50,25 @@ def write_csv(rows: Iterable[TrialResult], path: Path) -> Path:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
         for r in rows:
-            w.writerow(r.model_dump(mode="json"))
+            row = r.model_dump(mode="json")
+            w.writerow({k: json.dumps(v, sort_keys=True) if isinstance(v, (dict, list)) else v for k, v in row.items()})
     return path
+
+
+def row_from_csv(rec: dict[str, str]) -> TrialResult:
+    """Inverse of :func:`write_csv`: empty → None, JSON-encoded dict/list columns decoded."""
+    clean: dict[str, Any] = {}
+    for k, v in rec.items():
+        if v == "" or v is None:
+            clean[k] = None
+        elif v[:1] in "{[":
+            try:
+                clean[k] = json.loads(v)
+            except ValueError:
+                clean[k] = v
+        else:
+            clean[k] = v
+    return TrialResult.model_validate(clean)
 
 
 def _median(xs: list[Any]) -> float | None:
@@ -172,6 +196,78 @@ def summary_delta_cis(
     return out
 
 
+def verdicts(rows: list[TrialResult], baseline: str = "control") -> list[dict[str, Any]]:
+    """Headline per (suite, model, variant): correctness gate first, then the token delta.
+
+    A variant whose pass rate is below the baseline's gets ``verdict='REGRESSION'`` and its token
+    delta is reported but not credited. Otherwise the verdict reads the bootstrap CI of the median
+    per-task total-token delta: ``saves tokens`` (CI entirely < 0), ``costs tokens`` (CI entirely > 0),
+    ``inconclusive``, or ``no paired tasks`` (nothing passed in both arms yet).
+    """
+    deltas = paired_deltas(rows, baseline)
+    out: list[dict[str, Any]] = []
+    for reg in regressions(rows, baseline):
+        mine = [
+            d for d in deltas if (d["suite"], d["model"], d["variant"]) == (reg["suite"], reg["model"], reg["variant"])
+        ]
+        row: dict[str, Any] = dict(reg)
+        row["n_paired_tasks"] = len(mine)
+        for metric in ("total_tokens", "prompt_tokens_total", "output_tokens", "n_turns", "agent_s", "cost_usd"):
+            vals = [float(d[f"{metric}_delta_pct"]) for d in mine if d.get(f"{metric}_delta_pct") is not None]
+            med, lo, hi = bootstrap_ci(vals, seed=hash((reg["model"], reg["variant"], metric)) & 0xFFFFFFFF)
+            row[f"{metric}_median"], row[f"{metric}_ci_lo"], row[f"{metric}_ci_hi"] = med, lo, hi
+        lo, hi = row["total_tokens_ci_lo"], row["total_tokens_ci_hi"]
+        if reg["regression"]:
+            row["verdict"] = "REGRESSION"
+        elif lo is None or hi is None:
+            row["verdict"] = "no paired tasks"
+        elif row["n_paired_tasks"] >= 2 and hi < 0:
+            row["verdict"] = "saves tokens"
+        elif row["n_paired_tasks"] >= 2 and lo > 0:
+            row["verdict"] = "costs tokens"
+        else:
+            row["verdict"] = "inconclusive"
+        out.append(row)
+    return out
+
+
+ABSOLUTE_METRICS = (
+    "total_tokens",
+    "prompt_tokens_total",
+    "cache_read_tokens",
+    "output_tokens",
+    "n_turns",
+    "n_tool_calls",
+    "tool_output_tokens_est",
+    "agent_s",
+    "cost_usd",
+)
+
+
+def variant_medians(rows: list[TrialResult]) -> list[dict[str, Any]]:
+    """Absolute medians per (suite, model, variant) over passing trials with usage."""
+    grp: dict[tuple[str, str, str], list[TrialResult]] = defaultdict(list)
+    for r in rows:
+        grp[(r.suite or "?", r.model or "?", r.variant or "?")].append(r)
+    out: list[dict[str, Any]] = []
+    for (suite, model, variant), rs in sorted(grp.items()):
+        ok = [r for r in rs if r.passed and not r.usage_missing]
+        d: dict[str, Any] = {"suite": suite, "model": model, "variant": variant, "n_passed": len(ok), "n": len(rs)}
+        for m in ABSOLUTE_METRICS:
+            d[m] = _median([getattr(r, m) for r in ok])
+        out.append(d)
+    return out
+
+
+def tool_usage(rows: list[TrialResult]) -> dict[str, dict[str, int]]:
+    """Summed ``tool_calls_by_name`` per variant (all trials)."""
+    agg: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in rows:
+        for name, n in (r.tool_calls_by_name or {}).items():
+            agg[r.variant or "?"][name] += int(n)
+    return {v: dict(sorted(d.items(), key=lambda kv: -kv[1])) for v, d in sorted(agg.items())}
+
+
 def _fmt(v: Any, pct: bool = False) -> str:
     if v is None:
         return "–"
@@ -190,6 +286,55 @@ def markdown(rows: list[TrialResult], title: str, baseline: str = "control", not
     lines += [
         f"Baseline: `{baseline}` · variants: {', '.join(f'`{v}`' for v in variants)}",
         "",
+    ]
+    heads = verdicts(rows, baseline)
+    if heads:
+        lines += [
+            "## Verdict — correctness gate, then token savings",
+            "",
+            "| suite | model | variant | pass rate (base → variant) | gate | paired tasks | "
+            "median Δ total tokens [95% CI] | Δ prompt | Δ output | Δ turns | Δ agent time | verdict |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for h in heads:
+            gate = "**REGRESSION**" if h["regression"] else "hold"
+            tok = (
+                f"{_fmt(h['total_tokens_median'], True)} "
+                f"[{_fmt(h['total_tokens_ci_lo'], True)}, {_fmt(h['total_tokens_ci_hi'], True)}]"
+            )
+            verdict = h["verdict"] if not h["regression"] else "regressed — token delta not credited"
+            lines.append(
+                f"| {h['suite']} | {h['model']} | {h['variant']} | "
+                f"{h['baseline_rate']:.0%} → {h['variant_rate']:.0%} | "
+                f"{gate} | {h['n_paired_tasks']} | {tok} | {_fmt(h['prompt_tokens_total_median'], True)} | "
+                f"{_fmt(h['output_tokens_median'], True)} | {_fmt(h['n_turns_median'], True)} | "
+                f"{_fmt(h['agent_s_median'], True)} | {verdict} |"
+            )
+        lines.append("")
+    meds = variant_medians(rows)
+    if meds:
+        lines += [
+            "## Absolute medians per variant (passing trials)",
+            "",
+            "| suite | model | variant | passed | total tok | prompt tok | cache read | output tok | turns | "
+            "tool calls | tool-out tok≈ | agent s | cost |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for d in meds:
+            lines.append(
+                f"| {d['suite']} | {d['model']} | {d['variant']} | {d['n_passed']} / {d['n']} | "
+                + " | ".join(_fmt(d[m]) for m in ABSOLUTE_METRICS)
+                + " |"
+            )
+        lines.append("")
+    usage = tool_usage(rows)
+    if usage:
+        lines += ["## Tool usage (calls, summed over trials)", ""]
+        for v, d in usage.items():
+            top = ", ".join(f"`{k}` {n}" for k, n in list(d.items())[:10])
+            lines.append(f"- **{v}**: {top}")
+        lines.append("")
+    lines += [
         "## Pass rate",
         "",
         "| suite | model | variant | agent | passed / trials | rate |",

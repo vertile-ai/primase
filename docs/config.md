@@ -65,9 +65,25 @@ variants:
       environment: {cpus: 2}
 ```
 
+Tool / prompt overlays (applied in the same per-trial task overlay; the source task is never modified):
+
+```yaml
+variants:
+  ego-browser:
+    instruction_prepend: "@prompts/ego-browser.md"   # '@' = file relative to root; else literal text
+    instruction_append: "Write your final answer to answer.json."
+    overlay_files:                                   # {dest in task dir: src relative to root}
+      environment/skills/ego-browser: vendor/ego-lite/skills/ego-browser
+  playwright-mcp:
+    mcp_servers:                                     # Harbor: [[environment.mcp_servers]]; local: --mcp-config
+      - {name: playwright, command: npx, args: ["-y", "@playwright/mcp@latest", "--headless", "--isolated"]}
+      # - {name: remote, transport: streamable-http, url: "http://127.0.0.1:8931/mcp"}
+```
+
 - If `model` is set, that variant is **not** crossed with top-level `models`.
 - If `agent` is set, name/kwargs/plugin merge over the experiment-level agent
-  (kwargs and plugin are shallow-merged).
+  (kwargs and plugin are shallow-merged). The agent only changes when the variant sets
+  `agent.name` explicitly (0.2.0 silently fell back to `cursor-cli` when only `kwargs` was set).
 - `task_toml` overlays are applied in the same per-trial task directory overlay
   Harbor uses for `network: open`.
 

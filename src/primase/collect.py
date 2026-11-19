@@ -234,6 +234,8 @@ def collect_trial(
         n_tool_calls=n_tools,
         tool_output_chars=chars,
         tool_output_tokens_est=(chars // 4) if chars is not None else None,
+        tool_calls_by_name=metrics.extra.get("tool_calls_by_name") or None,
+        tool_result_images=metrics.extra.get("tool_result_images"),
         n_shell_calls=n_shell,
         shell_output_chars=sh_chars,
         shell_output_tokens_est=(sh_chars // 4) if sh_chars is not None else None,

@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.3.0 – unreleased
+
+Primase's headline is now explicit: **correctness gate first, then token savings.** This release
+makes *tools* (browser CLIs, MCP servers, skills, prompts) first-class variants and adds a host
+backend for tools that cannot run in a container.
+
+### Verdict-first reports
+
+`summary.md` opens with a **Verdict** table per (suite, model, variant): pass rate baseline →
+variant, gate (`hold` / `REGRESSION`), paired-task count, median Δ total tokens with bootstrap 95%
+CI, Δ prompt / output tokens, Δ turns, Δ agent time, and a verdict (`saves tokens`, `costs
+tokens`, `inconclusive`, `no paired tasks`; regressions are reported but not credited). Followed by
+absolute medians per variant and a tool-usage breakdown. Deltas now also cover input and
+cache-write tokens.
+
+### Tool variants
+
+New `VariantSpec` fields, applied in the per-trial task overlay (source tasks are never touched):
+`instruction_prepend` / `instruction_append` (text or `@file`), `mcp_servers` (Harbor
+`[[environment.mcp_servers]]`; local backend: `--mcp-config`), `overlay_files`
+(`{dest: src}` copies, e.g. a skill or Dockerfile layer). See [docs/tools.md](docs/tools.md).
+
+### `local` backend
+
+`backend: local` runs the agent CLI on the host via `python -m primase.local_runner` and writes a
+Harbor-shaped trial dir, so collection, resume, redaction and reports are unchanged. Agent plugins
+gain `local_command()` (built in for `claude-code` and `cursor-cli`; any agent via
+`agent.kwargs.local_command`). See [docs/backends.md](docs/backends.md#local-backend).
+
+### Metrics
+
+- Claude Code stream-json now yields turns (distinct assistant messages), tool calls, tool-result
+  chars, shell calls/output, screenshots returned, CLI version, and `tool_calls_by_name`
+  (`Bash:<program>` / MCP tool names). New `TrialResult` fields: `tool_calls_by_name`,
+  `tool_result_images` (additive; schema stays 2.0).
+- `trials.csv` JSON-encodes dict/list columns; `primase export` reloads them (`row_from_csv`).
+
+### Fixes
+
+- A variant that only set `agent.kwargs` / `agent.plugin` silently switched the agent to
+  `cursor-cli` (the `AgentSpec.name` default). The experiment-level agent is now kept unless the
+  variant sets `agent.name`.
+- `toml_edit` treats `[[array.of.tables]]` headers as table boundaries, so table-key patches never
+  land inside an array-of-tables block.
+- Harbor overlays: task.toml overrides, network patch, MCP servers and instruction/file overlays
+  are folded into a single overlay (`Backend.build_overlay`).
+
 ## 0.2.0 – 2026-11-15
 
 General variant overrides, uniform agent plugins, N-arm reports, and publishable

@@ -112,6 +112,11 @@ class TrialResult(BaseModel):
     n_tool_calls: int | None = None
     tool_output_chars: int | None = Field(None, description="approx. model-visible chars of all tool results")
     tool_output_tokens_est: int | None = Field(None, description="tool_output_chars / 4 (approximation)")
+    tool_calls_by_name: dict[str, int] | None = Field(
+        None,
+        description="tool calls per label; shell calls split by program (e.g. 'Bash:agent-browser'), MCP by tool",
+    )
+    tool_result_images: int | None = Field(None, description="images returned in tool results (e.g. screenshots)")
     n_shell_calls: int | None = None
     shell_output_chars: int | None = None
     shell_output_tokens_est: int | None = None
