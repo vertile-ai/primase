@@ -79,6 +79,7 @@ def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[
                             setup=list(v.setup),
                             prebuild=list(v.prebuild),
                             require_paths=list(v.require_paths),
+                            require_commands=list(v.require_commands),
                             image_prefix=v.image_prefix,
                             task_toml_overrides={k: dict(val) for k, val in v.task_toml.items()},
                             instruction_prepend=v.instruction_prepend,

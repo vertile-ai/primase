@@ -13,9 +13,11 @@ variants:
   agent-browser:
     dir: shared
     instruction_prepend: "@prompts/agent-browser.md"
+    require_commands: [agent-browser]
   ego-browser:
     dir: shared
     instruction_prepend: "@prompts/ego-browser.md"
+    require_commands: [ego-browser]
   playwright-mcp:
     dir: shared
     instruction_prepend: "@prompts/mcp.md"

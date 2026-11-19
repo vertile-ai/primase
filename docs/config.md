@@ -52,6 +52,7 @@ variants:
     setup: []                         # shell, cwd = task dir, each trial
     prebuild: []
     require_paths: [environment/extra-layer]
+    require_commands: [agent-browser]   # local backend: validate fails if not on PATH
     image_prefix: extra-
   config-b:
     agent:

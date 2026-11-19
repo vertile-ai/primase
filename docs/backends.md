@@ -11,6 +11,7 @@ from pathlib import Path
 from primase.backends import Backend, RunContext, Validation
 from primase.schema import TrialSpec, TrialResult
 
+
 class MyBackend(Backend):
     name = "mybench"
 

@@ -69,6 +69,10 @@ class LocalBackend(Backend):
             except Exception as e:  # noqa: BLE001
                 ok = False
                 msgs.append(f"task.toml parse error: {e}")
+        for cmd in ctx.require_commands:
+            if shutil.which(cmd) is None:
+                ok = False
+                msgs.append(f"variant requires command not on PATH: {cmd}")
         for rel in ctx.require_paths:
             if not (td / rel).exists():
                 ok = False

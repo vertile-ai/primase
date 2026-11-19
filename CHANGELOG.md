@@ -6,6 +6,9 @@ Primase's headline is now explicit: **correctness gate first, then token savings
 makes *tools* (browser CLIs, MCP servers, skills, prompts) first-class variants and adds a host
 backend for tools that cannot run in a container.
 
+- Variant `require_commands`: the local backend's `validate` fails when a tool CLI is not on PATH,
+  so a missing tool is caught before any paid trial.
+
 ### Verdict-first reports
 
 `summary.md` opens with a **Verdict** table per (suite, model, variant): pass rate baseline →

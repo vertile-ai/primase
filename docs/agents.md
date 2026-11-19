@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from primase.agents import AgentPlugin, AgentMetrics, BudgetHook
 
+
 class MyAgentPlugin(AgentPlugin):
     name = "my-agent"
     billed_cost_sources = frozenset({"my_agent"})  # cost_source values that mean "CLI billed"

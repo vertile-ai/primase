@@ -273,6 +273,15 @@ def test_local_backend_validate_reports_missing_cli(local_bench):
     assert not v.ok and any("not found on PATH" in m for m in v.messages)
 
 
+def test_local_backend_validate_reports_missing_tool_command(local_bench):
+    cfg = _cfg(local_bench, {"a": {"dir": "shared", "require_commands": ["sh", "definitely-not-a-tool-xyz"]}})
+    p = plan(cfg)[0][0]
+    assert p.ctx.require_commands == ["sh", "definitely-not-a-tool-xyz"]
+    v = get_backend("local", p.ctx.root).validate(p.spec, p.ctx)
+    msgs = [m for m in v.messages if "requires command" in m]
+    assert not v.ok and msgs == ["variant requires command not on PATH: definitely-not-a-tool-xyz"]
+
+
 def test_csv_roundtrip_with_tool_dict(tmp_path):
     r = TrialResult(job_name="j", backend="local", task="t", status="passed", tool_calls_by_name={"Bash:x": 2})
     path = write_csv([r], tmp_path / "t.csv")

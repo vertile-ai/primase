@@ -130,6 +130,13 @@ class VariantSpec(_Strict):
             "E.g. ship a skill, an AGENTS.md, or a Dockerfile layer that installs a tool."
         ),
     )
+    require_commands: list[str] = Field(
+        default_factory=list,
+        description=(
+            "host executables the variant's tool needs (e.g. agent-browser). local backend: validate fails "
+            "when one is not on PATH, so a missing tool is caught before any paid trial runs."
+        ),
+    )
     mcp_servers: list[McpServerSpec] = Field(
         default_factory=list,
         description=(

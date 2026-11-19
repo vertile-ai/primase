@@ -11,6 +11,7 @@ another variant. Hold the agent, model, and tasks fixed; vary only the tool; rea
 | Tell the agent which tool to use / how | `instruction_prepend` / `instruction_append` (text or `@file`) |
 | Expose an MCP server | `mcp_servers` (Harbor `[[environment.mcp_servers]]`; local: `--mcp-config`) |
 | Ship a skill, AGENTS.md, Dockerfile layer, wrapper script | `overlay_files` |
+| Fail `validate` early when the tool's CLI is missing on the host (local backend) | `require_commands` |
 | Install / start the tool | `prebuild` (once) / `setup` (per trial) hooks, or the task's Dockerfile |
 | Tool flags / env | `env`, `agent.kwargs` (e.g. `allowed_tools`, `disallowed_tools`, `max_turns`) |
 | Tools that cannot run in a Linux container | `backend: local` on the suite (see [backends.md](backends.md#local-backend)) |

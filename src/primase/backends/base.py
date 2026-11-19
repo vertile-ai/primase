@@ -39,6 +39,7 @@ class RunContext:
     setup: list[str] = field(default_factory=list)
     prebuild: list[str] = field(default_factory=list)
     require_paths: list[str] = field(default_factory=list)
+    require_commands: list[str] = field(default_factory=list)
     image_prefix: str | None = None
     task_toml_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     instruction_prepend: str | None = None
