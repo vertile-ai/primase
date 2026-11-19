@@ -99,6 +99,7 @@ Task conventions (Harbor layout, plus):
 | `environment/workspace/` | copied into the agent's cwd; nothing else under `environment/` is (so fixture data / answers stay off the agent's disk view) |
 | `environment/local-setup.sh` | run before the agent (cwd = workspace); may start background servers; its process group is killed after the verifier |
 | `{{PRIMASE_PORT}}` in `instruction.md` | replaced by a free TCP port, also exported as `$PRIMASE_PORT` |
+| `{{env:NAME}}` in `instruction.md` | replaced by `$NAME` from the runner env (trial errors if unset), e.g. a self-hosted site URL |
 | `tests/test.sh` | run after the agent (cwd = workspace); writes `$PRIMASE_VERIFIER_DIR/reward.txt` or `reward.json`; with neither, exit code 0 → reward 1.0 |
 | env | `PRIMASE_TASK_DIR`, `PRIMASE_TRIAL_DIR`, `PRIMASE_WORKSPACE`, `PRIMASE_AGENT_DIR`, `PRIMASE_VERIFIER_DIR`, `PRIMASE_STATE_DIR`, `PRIMASE_TESTS_DIR` (verifier only) |
 

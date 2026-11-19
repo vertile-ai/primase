@@ -291,3 +291,12 @@ def test_variant_agent_kwargs_keep_experiment_agent(local_bench):
     assert cfg.variants["a"].resolved_agent(cfg.agent).kwargs == {"x": "1"}
     cfg2 = _cfg(local_bench, {"a": {"dir": "shared", "agent": {"name": "codex"}}})
     assert cfg2.variants["a"].resolved_agent(cfg2.agent).name == "codex"
+
+
+def test_render_instruction_placeholders():
+    from primase.local_runner import render_instruction
+
+    out = render_instruction("go to {{env:SITE}}/x on port {{PRIMASE_PORT}}", 1234, {"SITE": "http://h"})
+    assert out == "go to http://h/x on port 1234"
+    with pytest.raises(KeyError, match="MISSING"):
+        render_instruction("{{env:MISSING}}", 1, {})

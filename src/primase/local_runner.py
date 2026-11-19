@@ -17,6 +17,7 @@ Task conventions (all optional except tests/test.sh):
     environment/local-setup.sh   run before the agent (cwd=workspace); may start background servers.
                                  Its whole process group is killed after the verifier.
     {{PRIMASE_PORT}}             replaced in instruction.md with a free TCP port (also $PRIMASE_PORT).
+    {{env:NAME}}                 replaced with $NAME from the runner env (e.g. a self-hosted site URL).
     tests/test.sh                run after the agent with cwd=workspace; writes reward to
                                  $PRIMASE_VERIFIER_DIR/reward.txt (falls back to exit code 0 -> 1.0).
 """
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -47,6 +49,22 @@ def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])
+
+
+_ENV_PLACEHOLDER = re.compile(r"\{\{env:([A-Za-z_][A-Za-z0-9_]*)\}\}")
+
+
+def render_instruction(text: str, port: int, env: dict[str, str]) -> str:
+    """``{{PRIMASE_PORT}}`` → free port; ``{{env:NAME}}`` → value of NAME (KeyError if unset)."""
+    text = text.replace("{{PRIMASE_PORT}}", str(port))
+
+    def sub(m: re.Match[str]) -> str:
+        name = m.group(1)
+        if name not in env:
+            raise KeyError(f"instruction placeholder {{{{env:{name}}}}} but ${name} is not set")
+        return env[name]
+
+    return _ENV_PLACEHOLDER.sub(sub, text)
 
 
 def mcp_config(servers: list[dict[str, Any]]) -> dict[str, Any]:
@@ -130,9 +148,6 @@ def run(spec: dict[str, Any]) -> dict[str, Any]:
             "PRIMASE_STATE_DIR": str(state_dir),
         }
     )
-    instruction = (task_dir / "instruction.md").read_text().replace("{{PRIMASE_PORT}}", str(port))
-    (agent_dir / "instruction.md").write_text(instruction)
-
     mcp_path: Path | None = None
     if spec.get("mcp_servers"):
         cfg = json.dumps(mcp_config(spec["mcp_servers"]), indent=2)
@@ -150,6 +165,8 @@ def run(spec: dict[str, Any]) -> dict[str, Any]:
     }
     setup_proc: subprocess.Popen[Any] | None = None
     try:
+        instruction = render_instruction((task_dir / "instruction.md").read_text(), port, env)
+        (agent_dir / "instruction.md").write_text(instruction)
         setup = task_dir / "environment" / "local-setup.sh"
         t0 = _now()
         if setup.exists():
