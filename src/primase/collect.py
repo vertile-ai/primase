@@ -214,6 +214,7 @@ def collect_trial(
         task=task,
         agent_timed_out=timed_out,
         usage_missing=u is None and prompt_total is None,
+        usage_partial=bool(metrics.extra.get("usage_partial")),
         model=model,
         agent=ai.get("name"),
         agent_version=ai.get("version") or tstats.get("agent_version") or metrics.agent_version,

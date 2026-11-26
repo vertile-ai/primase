@@ -5,11 +5,12 @@ Primase sits **on top of** [Harbor](https://github.com/harbor-framework/harbor) 
 [Pier](https://github.com/datacurve-ai/pier)): you keep writing tasks in those formats, and
 primase runs a baseline and any number of variants and answers two questions, in this order:
 
-1. **Correctness gate** — did the variant hold the baseline's pass rate? If not, it is a
-   REGRESSION and its token numbers are not credited.
+1. **Correctness gate** — did the variant hold the baseline's pass rate on the same tasks and
+   trials? If it dropped (`REGRESSION`) or the evidence is too thin to tell (`unclear`), its
+   token numbers are shown but not credited.
 2. **Token delta** (the headline) — on tasks both arms pass, how many tokens (input / cache /
-   output), turns, tool calls, and how much time did the variant save? Median per-task delta
-   with a bootstrap 95% CI.
+   output), turns, tool calls, and how much time and cost did the variant save? Median per-task
+   delta with a bootstrap 95% CI; a direction is claimed only with at least 6 paired tasks.
 
 A "variant" is anything you want to price: an agent runtime, an agent config, a model, a
 prompt, a context-compression layer, or a **tool** (e.g. which browser CLI or MCP server the
@@ -59,6 +60,7 @@ primase scan-secrets --env-file ~/.config/mybench/secrets.env --prefix sk- .
 ```
 
 Filters `--suite/--task/--model/--variant/--agent/--trial` work on every command.
+`run` validates first and refuses to start if any selected trial is invalid.
 `--dry-run` prints the exact Harbor/Pier argv; `--force` re-runs a finished trial.
 
 ## Experiment config (sketch)

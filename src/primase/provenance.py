@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import shutil
@@ -70,9 +71,33 @@ def hash_path(path: Path) -> str | None:
     return h.hexdigest()[:16]
 
 
-def variant_hash(name: str, variant: VariantSpec) -> str:
-    blob = json.dumps({"name": name, **variant.model_dump(mode="json")}, sort_keys=True, separators=(",", ":"))
+def variant_hash(name: str, variant: VariantSpec, root: Path | None = None) -> str:
+    """Hash of the variant definition plus the content it points at (``@file`` instruction
+    prepend/append and ``overlay_files`` sources, resolved against *root*), so editing a prompt or
+    skill file changes the hash. A missing file contributes only its path string."""
+    data: dict[str, Any] = {"name": name, **variant.model_dump(mode="json")}
+    if root is not None:
+        refs = [v[1:] for v in (variant.instruction_prepend, variant.instruction_append) if v and v.startswith("@")]
+        refs += list(variant.overlay_files.values())
+        contents: dict[str, str | None] = {}
+        for ref in refs:
+            path = Path(ref).expanduser()
+            contents[ref] = hash_path(path if path.is_absolute() else Path(root) / path)
+        data["_contents"] = contents
+    blob = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+@functools.cache
+def tool_version(cmd: str) -> str | None:
+    """First line of ``<cmd> --version`` (10 s timeout), cached per process; None on failure."""
+    out = _run([cmd, "--version"])
+    return out.splitlines()[0].strip() if out else None
+
+
+def tool_versions(commands: list[str]) -> dict[str, str] | None:
+    found = {c: v for c in commands if (v := tool_version(c))}
+    return found or None
 
 
 def task_content_hash(task_dir: Path) -> str | None:
@@ -166,7 +191,8 @@ def build_provenance(
         ),
         "config_hash": cfg.config_hash(),
         "variant_def": {"name": variant_name, **variant.model_dump(mode="json")},
-        "variant_hash": variant_hash(variant_name, variant),
+        "variant_hash": variant_hash(variant_name, variant, cfg.root_dir),
+        "tool_versions": tool_versions(variant.require_commands),
         "task_content_hash": task_content_hash(task_dir),
         "docker_image": img,
         "docker_image_digest": docker_image_digest(img) if img else None,

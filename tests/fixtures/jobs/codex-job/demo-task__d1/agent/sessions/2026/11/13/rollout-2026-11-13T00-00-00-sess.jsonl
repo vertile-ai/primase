@@ -1,3 +1,3 @@
-{"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 80, "output_tokens": 20, "cached_input_tokens": 40, "cache_write_input_tokens": 4, "total_tokens": 144}}}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 120, "cached_input_tokens": 40, "cache_write_input_tokens": 4, "output_tokens": 20, "reasoning_output_tokens": 0, "total_tokens": 140}, "last_token_usage": {"input_tokens": 70, "cached_input_tokens": 30, "cache_write_input_tokens": 0, "output_tokens": 5, "reasoning_output_tokens": 0, "total_tokens": 75}}}}
 {"type": "response_item", "payload": {"item": {"type": "function_call", "name": "shell"}}}
 {"type": "response_item", "payload": {"item": {"type": "function_call_output", "output": "hello!!"}}}

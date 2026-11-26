@@ -26,7 +26,9 @@ def test_regression_flag():
         _r("b", "treatment", "failed", 10),
     ]
     [reg] = regressions(rows, baseline="control")
-    assert reg["regression"] and reg["baseline_rate"] == 1.0 and reg["variant_rate"] == 0.5
+    # one lost task out of two: the drop is within noise, so the gate is unclear, not REGRESSION
+    assert not reg["regression"] and reg["gate"] == "unclear"
+    assert reg["baseline_rate"] == 1.0 and reg["variant_rate"] == 0.5 and reg["lost_tasks"] == ["b"]
 
 
 def test_deltas_only_over_both_pass_and_medians():

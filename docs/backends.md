@@ -78,6 +78,7 @@ and if that is omitted too, it defaults to **`harbor`**.
 ```yaml
 suites:
   - {id: browser, backend: local}
+concurrency: 1          # required: every trial shares this one host
 ```
 
 Each trial runs `python -m primase.local_runner <spec.json>` (so logging, secret redaction,
@@ -85,30 +86,78 @@ resume and collection are the same as for Harbor) and writes a Harbor-shaped tri
 
 ```text
 <job>/<task>__<trial_id>/
-  result.json          started/finished, agent_execution, verifier_result.rewards, exception_info
+  result.json          started/finished, agent_execution, verifier_result.rewards, exception_info, workspace
   agent/<cli>.txt      agent stdout (claude-code.txt / cursor-cli.txt stream-json) → agent plugin collect()
   agent/instruction.md agent/mcp.json agent/command.json agent/stderr.txt
   verifier/reward.txt  written by tests/test.sh
-  state/               $PRIMASE_STATE_DIR — scratch for fixture servers, outside the agent's cwd
-  workspace/           agent cwd, seeded from environment/workspace/ only
+  state/               $PRIMASE_STATE_DIR — scratch for fixture servers
 ```
+
+The agent's working directory is **not** in the trial dir. It is a fresh temp dir
+(`primase-ws-*` under `$TMPDIR`), seeded from `environment/workspace/`, and its path is recorded
+in `result.json` as `workspace`. It is left on disk after the trial for inspection.
 
 Task conventions (Harbor layout, plus):
 
 | Item | Meaning |
 |---|---|
-| `environment/workspace/` | copied into the agent's cwd; nothing else under `environment/` is (so fixture data / answers stay off the agent's disk view) |
+| `environment/workspace/` | copied into the agent's cwd; nothing else under `environment/` is |
 | `environment/local-setup.sh` | run before the agent (cwd = workspace); may start background servers; its process group is killed after the verifier |
 | `{{PRIMASE_PORT}}` in `instruction.md` | replaced by a free TCP port, also exported as `$PRIMASE_PORT` |
 | `{{env:NAME}}` in `instruction.md` | replaced by `$NAME` from the runner env (trial errors if unset), e.g. a self-hosted site URL |
 | `tests/test.sh` | run after the agent (cwd = workspace); writes `$PRIMASE_VERIFIER_DIR/reward.txt` or `reward.json`; with neither, exit code 0 → reward 1.0 |
-| env | `PRIMASE_TASK_DIR`, `PRIMASE_TRIAL_DIR`, `PRIMASE_WORKSPACE`, `PRIMASE_AGENT_DIR`, `PRIMASE_VERIFIER_DIR`, `PRIMASE_STATE_DIR`, `PRIMASE_TESTS_DIR` (verifier only) |
+
+Environment variables:
+
+| Process | Gets |
+|---|---|
+| agent | `PRIMASE_PORT`, `PRIMASE_WORKSPACE` only |
+| `local-setup.sh`, `tests/test.sh` | those plus `PRIMASE_TASK_DIR`, `PRIMASE_TRIAL_DIR`, `PRIMASE_AGENT_DIR`, `PRIMASE_VERIFIER_DIR`, `PRIMASE_STATE_DIR` (`PRIMASE_TESTS_DIR` for the verifier) |
 
 The agent command comes from the agent plugin's `local_command()` (built in for `claude-code`
 and `cursor-cli`), or from `agent.kwargs.local_command` (a list with `{instruction}`,
 `{instruction_file}`, `{model}`, `{workspace}`, `{mcp_config}` placeholders) for any agent.
-Timeouts come from `task.toml` (`[agent].timeout_sec` × multiplier, `[verifier].timeout_sec`).
+The plugin also owns MCP delivery: it returns the config files to write, and the runner writes
+them. Timeouts come from `task.toml` (`[agent].timeout_sec` × multiplier,
+`[verifier].timeout_sec`). On timeout the agent's process group gets SIGTERM, then SIGKILL after
+5 s. The group is also killed after a normal exit, so children the agent left behind (browser
+daemons, dev servers) do not survive into the next trial.
 
-**Safety:** `claude-code` runs with `--permission-mode bypassPermissions` by default because the
-trial is unattended (override with `agent.kwargs.permission_mode`). The agent runs as you, on your
-machine, with your network — only point it at tasks you trust. `network: restricted` is rejected.
+### Keeping the arms equal
+
+Every arm runs on the same host, so the host must look the same to every arm.
+
+- `claude-code` always runs with `--strict-mcp-config` and its own `agent/mcp.json` (empty when
+  the variant has no `mcp_servers`), so no arm sees MCP servers configured on the host.
+- `claude-code` runs with `--setting-sources project` by default: user-level settings, hooks,
+  plugins, skills and instructions are not loaded. A variant can still ship
+  `.claude/settings.json` in the workspace. Override with `agent.kwargs.setting_sources`.
+- `cursor-cli` gets `.cursor/mcp.json` in the workspace only when the variant has `mcp_servers`.
+- State outside the workspace (browser profiles, tool caches) is not reset by primase. Reset it
+  in the task's `local-setup.sh` when the tool under test keeps state.
+
+### What `local` does not support
+
+`validate` (and `run`, which validates first) fails when a variant sets something this backend
+would ignore: `image_prefix`, or `task_toml` keys other than `agent.timeout_sec` /
+`verifier.timeout_sec`. `network: restricted` and `concurrency > 1` are rejected. The reverse
+holds on Harbor/Pier: `require_commands` and `mcp_servers[].env` are local-only and fail there.
+
+Two variant fields mean different things per backend:
+
+| Field | Harbor / Pier | local |
+|---|---|---|
+| `env` | reaches the `harbor` process, not the container | reaches the agent, setup and verifier |
+| `overlay_files` | lands in the task dir; reaches the agent only if the Dockerfile copies it | reaches the agent only under `environment/workspace/` |
+
+A task does not run unchanged on both backends: a Harbor `tests/test.sh` writes its reward to a
+fixed container path, and a local task uses `local-setup.sh` where Harbor uses the Dockerfile.
+
+### Safety
+
+`claude-code` runs with `--permission-mode bypassPermissions` by default because the trial is
+unattended (override with `agent.kwargs.permission_mode`). This is not a sandbox: the agent runs
+as you, with your network and your files. primase keeps the task dir, the verifier dir and
+their paths out of the agent's working directory and environment, which stops an agent from
+stumbling on the grader, not one that searches the disk for it. Secrets from `env_file` are in
+the agent's environment. `network: restricted` is rejected.

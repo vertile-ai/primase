@@ -9,14 +9,34 @@ backend for tools that cannot run in a container.
 - Variant `require_commands`: the local backend's `validate` fails when a tool CLI is not on PATH,
   so a missing tool is caught before any paid trial.
 
+### Measurement validity (design review follow-up)
+
+- **Gate**: computed over (task, trial) cells present in both arms; errored trials are counted
+  separately; outcomes are `hold` / `REGRESSION` / `unclear`. Lost tasks and unstable baseline
+  tasks are listed.
+- **Verdict**: a direction needs at least 6 paired tasks; the CI resamples tasks and trials;
+  the bootstrap seed is stable across processes; aggregate Δ tokens, Δ cost and dropped-task
+  counts are shown.
+- **Usage**: a Claude Code trial with no final `result` event reports the sum of its per-message
+  usage and is marked `usage_partial`; timed-out and partial trials are excluded from token
+  deltas. Codex usage now reads the cumulative total and no longer double counts cached input.
+- **`local` backend**: the agent runs in a temp workspace outside the trial dir and no longer
+  receives the task / verifier paths; `claude-code` always runs with `--strict-mcp-config` and
+  `--setting-sources project` (override: `agent.kwargs.setting_sources`); the agent's process
+  group is killed after every trial; `concurrency > 1` is rejected.
+- **Validation**: variant fields the backend ignores fail `validate`; `run` validates first.
+- **Provenance**: `variant_hash` covers the content of `@file` prompts and `overlay_files`;
+  `tool_versions` records `--version` of each `require_commands` entry. Arm order rotates per
+  task and trial. The Cursor plugin emits `tool_calls_by_name`.
+- New `TrialResult` fields: `usage_partial`, `tool_versions` (additive; schema stays 2.0).
+
 ### Verdict-first reports
 
 `summary.md` opens with a **Verdict** table per (suite, model, variant): pass rate baseline →
-variant, gate (`hold` / `REGRESSION`), paired-task count, median Δ total tokens with bootstrap 95%
-CI, Δ prompt / output tokens, Δ turns, Δ agent time, and a verdict (`saves tokens`, `costs
-tokens`, `inconclusive`, `no paired tasks`; regressions are reported but not credited). Followed by
-absolute medians per variant and a tool-usage breakdown. Deltas now also cover input and
-cache-write tokens.
+variant, gate, paired-task count, median Δ total tokens with bootstrap 95% CI, aggregate Δ
+tokens, Δ prompt / output tokens, Δ turns, Δ agent time, Δ cost, and a verdict. Followed by
+absolute medians per variant and a tool-usage breakdown. See
+[docs/tools.md](docs/tools.md#how-the-verdict-is-decided) for the rules.
 
 ### Tool variants
 

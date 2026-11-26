@@ -91,6 +91,13 @@ class TrialResult(BaseModel):
             "which a timed-out/killed agent never writes)"
         ),
     )
+    usage_partial: bool = Field(
+        False,
+        description=(
+            "usage was reconstructed from per-message events because the agent never wrote its final "
+            "usage event (killed / timed out); a lower bound, excluded from token deltas"
+        ),
+    )
     # usage
     input_tokens: int | None = Field(None, description="non-cached input tokens")
     output_tokens: int | None = None
@@ -140,6 +147,9 @@ class TrialResult(BaseModel):
     docker_image: str | None = None
     docker_image_digest: str | None = None
     network_mode: str | None = None
+    tool_versions: dict[str, str] | None = Field(
+        None, description="`<cmd> --version` first line for each variant require_commands entry"
+    )
     trajectory_path: str | None = None
     agent_log_path: str | None = None
     verifier_path: str | None = None

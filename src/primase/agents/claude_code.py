@@ -8,7 +8,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from .base import AgentMetrics, AgentPlugin, LocalCommand, LocalInvocation, generic_local_command
+from .base import AgentMetrics, AgentPlugin, LocalCommand, LocalInvocation, generic_local_command, mcp_config
 
 STREAM = "claude-code.txt"
 
@@ -81,17 +81,24 @@ def _content_chars(content: Any) -> int:
 def parse_claude_stream(path: Path) -> AgentMetrics:
     """Aggregate Claude Code's ``claude-code.txt`` stream-json (type=result, total_cost_usd).
 
+    Usage = sum over ``result`` events. Without any result event carrying usage (agent killed /
+    timed out) it falls back to the sum over distinct assistant message ids (each id counted once,
+    last event wins) and sets ``extra['usage_partial'] = True`` — a lower bound.
+
     Besides usage this counts model turns (distinct assistant message ids), tool calls (with a
     per-tool label in ``extra['tool_calls_by_name']``), and model-visible tool-result chars.
     """
     out = AgentMetrics()
     if not path.exists():
         return out
+    result_usage = [0, 0, 0, 0]
+    has_result_usage = False
+    usage_by_msg: dict[str, dict[str, Any]] = {}
     msg_ids: set[str] = set()
     by_name: dict[str, int] = {}
     shell_ids: set[str] = set()
     tool_calls = tool_chars = shell_chars = n_images = 0
-    for line in path.read_text(errors="replace").splitlines():
+    for lineno, line in enumerate(path.read_text(errors="replace").splitlines()):
         line = line.strip()
         if not line.startswith("{"):
             continue
@@ -108,23 +115,14 @@ def parse_claude_stream(path: Path) -> AgentMetrics:
                 out.cost_source = "claude_code"
             u = ev.get("usage")
             if isinstance(u, dict):
-                out.input_tokens = 0
-                out.output_tokens = 0
-                out.cache_read_tokens = 0
-                out.cache_write_tokens = 0
-                out.has_usage = False
-                i, o, cr, cw = _claude_usage_fields(u)
-                out.has_usage = True
-                out.input_tokens, out.output_tokens = i, o
-                out.cache_read_tokens, out.cache_write_tokens = cr, cw
+                has_result_usage = True
+                for k, v in enumerate(_claude_usage_fields(u)):
+                    result_usage[k] += v
         elif t == "assistant":
             msg = ev.get("message") if isinstance(ev.get("message"), dict) else ev
             u = msg.get("usage") if isinstance(msg, dict) else None
-            if isinstance(u, dict) and not out.result_events:
-                i, o, cr, cw = _claude_usage_fields(u)
-                out.has_usage = True
-                out.input_tokens, out.output_tokens = i, o
-                out.cache_read_tokens, out.cache_write_tokens = cr, cw
+            if isinstance(u, dict):
+                usage_by_msg[str(msg.get("id") or f"_line{lineno}")] = u
             if isinstance(msg, dict) and msg.get("model"):
                 out.model = msg["model"]
             elif isinstance(ev, dict) and ev.get("model"):
@@ -152,6 +150,17 @@ def parse_claude_stream(path: Path) -> AgentMetrics:
                         shell_chars += n
         elif t == "system" and ev.get("subtype") == "init" and ev.get("claude_code_version"):
             out.agent_version = str(ev["claude_code_version"])
+    if has_result_usage:
+        out.has_usage = True
+        out.input_tokens, out.output_tokens, out.cache_read_tokens, out.cache_write_tokens = result_usage
+    elif usage_by_msg:
+        totals = [0, 0, 0, 0]
+        for u in usage_by_msg.values():
+            for k, v in enumerate(_claude_usage_fields(u)):
+                totals[k] += v
+        out.has_usage = True
+        out.input_tokens, out.output_tokens, out.cache_read_tokens, out.cache_write_tokens = totals
+        out.extra["usage_partial"] = True
     if tool_calls or msg_ids:
         out.n_turns = len(msg_ids) or out.n_turns
         out.n_tool_calls = tool_calls
@@ -251,9 +260,13 @@ class ClaudeCodePlugin(AgentPlugin):
     def local_command(self, inv: LocalInvocation) -> LocalCommand | None:
         """``claude -p`` headless, stream-json to ``claude-code.txt`` (same file Harbor's agent writes).
 
+        Every arm gets the same host isolation: ``<agent_dir>/mcp.json`` is always written (empty
+        ``mcpServers`` when the variant has none) and passed with ``--strict-mcp-config``, so user-level
+        MCP servers never leak in; ``--setting-sources`` excludes user settings/hooks/plugins by default.
+
         kwargs: ``permission_mode`` (default ``bypassPermissions`` — the trial runs unattended; use a
-        throwaway workspace), ``allowed_tools`` / ``disallowed_tools`` (list), ``max_turns`` (int),
-        ``extra_args`` (list), ``binary`` (default ``claude``).
+        throwaway workspace), ``setting_sources`` (default ``project``), ``allowed_tools`` /
+        ``disallowed_tools`` (list), ``max_turns`` (int), ``extra_args`` (list), ``binary`` (default ``claude``).
         """
         generic = generic_local_command(inv, default_stdout=STREAM)
         if generic is not None:
@@ -263,8 +276,9 @@ class ClaudeCodePlugin(AgentPlugin):
         if inv.model:
             argv += ["--model", inv.model]
         argv += ["--permission-mode", str(kw.get("permission_mode") or "bypassPermissions")]
-        if inv.mcp_config is not None:
-            argv += ["--mcp-config", str(inv.mcp_config), "--strict-mcp-config"]
+        mcp_path = inv.agent_dir / "mcp.json"
+        argv += ["--mcp-config", str(mcp_path), "--strict-mcp-config"]
+        argv += ["--setting-sources", str(kw.get("setting_sources") or "project")]
         for flag, key in (("--allowedTools", "allowed_tools"), ("--disallowedTools", "disallowed_tools")):
             vals = kw.get(key)
             if vals:
@@ -272,4 +286,5 @@ class ClaudeCodePlugin(AgentPlugin):
         if kw.get("max_turns"):
             argv += ["--max-turns", str(kw["max_turns"])]
         argv += [str(a) for a in kw.get("extra_args") or []]
-        return LocalCommand(argv=argv, stdout_file=STREAM)
+        files = {str(mcp_path): json.dumps(mcp_config(inv.mcp_servers), indent=2)}
+        return LocalCommand(argv=argv, stdout_file=STREAM, files=files)

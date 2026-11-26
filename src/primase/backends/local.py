@@ -20,6 +20,9 @@ from ..registry import read_task_toml
 from ..schema import TrialSpec
 from .base import Backend, RunContext, Validation
 
+#: the only task.toml keys local_runner reads
+_LOCAL_TASK_TOML_KEYS = frozenset({"agent.timeout_sec", "verifier.timeout_sec"})
+
 
 class LocalBackend(Backend):
     name = "local"
@@ -46,11 +49,30 @@ class LocalBackend(Backend):
         if ctx.network == "restricted":
             ok = False
             msgs.append("network=restricted is not enforceable on the local backend (host network)")
+        if ctx.concurrency > 1:
+            ok = False
+            msgs.append("local backend shares one host; set concurrency: 1")
+        if ctx.image_prefix:
+            ok = False
+            msgs.append("image_prefix is not supported on the local backend (no docker images)")
+        for table, keys in ctx.task_toml_overrides.items():
+            for key in keys:
+                if f"{table}.{key}" not in _LOCAL_TASK_TOML_KEYS:
+                    ok = False
+                    msgs.append(
+                        f"task_toml override {table}.{key} is ignored by the local backend "
+                        f"(supported: {', '.join(sorted(_LOCAL_TASK_TOML_KEYS))})"
+                    )
         try:
             plugin = get_agent(ctx.agent)
             probe = plugin.local_command(
                 LocalInvocation(
-                    instruction="x", model=ctx.model_id, workspace=td, agent_dir=td, kwargs=ctx.agent_kwargs
+                    instruction="x",
+                    model=ctx.model_id,
+                    workspace=td,
+                    agent_dir=td,
+                    kwargs=ctx.agent_kwargs,
+                    mcp_servers=ctx.mcp_servers,
                 )
             )
             if probe is None:

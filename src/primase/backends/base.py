@@ -47,6 +47,7 @@ class RunContext:
     overlay_files: dict[str, str] = field(default_factory=dict)
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     model_id: str | None = None
+    concurrency: int = 1
 
     def has_content_overlay(self) -> bool:
         """True when the variant changes task files beyond task.toml table keys."""
@@ -117,6 +118,13 @@ class Backend(ABC):
             if not (ctx.task_dir / rel).exists():
                 ok = False
                 msgs.append(f"variant requires missing path {rel}")
+        if ctx.require_commands:
+            ok = False
+            msgs.append(f"require_commands is only supported on the local backend (ignored by {self.name})")
+        for srv in ctx.mcp_servers:
+            if srv.get("env"):
+                ok = False
+                msgs.append(f"mcp_servers[{srv.get('name')}].env is only supported on the local backend")
         return Validation(ok, str(ctx.task_dir), msgs)
 
     def job_dir(self, spec: TrialSpec, ctx: RunContext) -> Path:

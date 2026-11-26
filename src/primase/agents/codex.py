@@ -16,7 +16,7 @@ def _codex_token_payload(ev: dict[str, Any]) -> dict[str, Any] | None:
     inner = payload.get("info") if isinstance(payload.get("info"), dict) else payload
     usage = None
     if isinstance(inner, dict):
-        usage = inner.get("last_token_usage") or inner.get("token_usage")
+        usage = inner.get("total_token_usage") or inner.get("last_token_usage") or inner.get("token_usage")
         if usage is None and payload.get("type") in {"token_count", "event_msg"}:
             usage = inner if "input_tokens" in inner or "output_tokens" in inner else None
     if ev.get("type") == "token_count" and isinstance(ev.get("last_token_usage"), dict):
@@ -25,7 +25,12 @@ def _codex_token_payload(ev: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def parse_codex_rollouts(agent_dir: Path) -> AgentMetrics:
-    """Parse ``agent/sessions/**/rollout-*.jsonl``; last_token_usage is cumulative."""
+    """Parse ``agent/sessions/**/rollout-*.jsonl``.
+
+    Uses the last ``token_count`` event's ``info.total_token_usage`` (cumulative over the session;
+    ``last_token_usage`` is only the latest turn and is a fallback). Codex's ``input_tokens`` INCLUDES
+    ``cached_input_tokens``, so non-cached input = input_tokens - cached_input_tokens.
+    """
     out = AgentMetrics()
     sessions = agent_dir / "sessions"
     if not sessions.exists():
@@ -63,9 +68,9 @@ def parse_codex_rollouts(agent_dir: Path) -> AgentMetrics:
                     tool_chars += len(c)
     if last:
         out.has_usage = True
-        out.input_tokens = int(last.get("input_tokens") or 0)
-        out.output_tokens = int(last.get("output_tokens") or 0)
         out.cache_read_tokens = int(last.get("cached_input_tokens") or 0)
+        out.input_tokens = int(last.get("input_tokens") or 0) - out.cache_read_tokens
+        out.output_tokens = int(last.get("output_tokens") or 0)
         out.cache_write_tokens = int(last.get("cache_write_input_tokens") or 0)
         if last.get("cost") is not None:
             out.cost_source = "codex"

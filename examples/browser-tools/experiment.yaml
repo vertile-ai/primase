@@ -9,6 +9,7 @@ agent:
     disallowed_tools: [WebFetch, WebSearch]    # don't let the agent bypass the browser under test
 models:
   - {id: claude-sonnet-4-5, provider_prefix: anthropic}
+# Pin the MCP package versions (not @latest) for a run you intend to publish.
 variants:
   agent-browser:
     dir: shared

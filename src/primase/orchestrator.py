@@ -44,9 +44,12 @@ def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[
         sel, skipped = reg.select(s.id, list(cfg.tiers), s.tasks)
         for t in skipped:
             notes.append(f"skip {s.id}/{t.task}: tier {t.tier} not in {cfg.tiers}")
+        variants = list(cfg.variants.items())
         for trial in range(1, cfg.trials + 1):
-            for t in sel:
-                for vname, v in cfg.variants.items():
+            for ti, t in enumerate(sel):
+                # rotate arm order per (task, trial) so the baseline does not always run first
+                k = (ti + trial - 1) % len(variants)
+                for vname, v in variants[k:] + variants[:k]:
                     agent = v.resolved_agent(cfg.agent)
                     models = cfg.models_for_variant(v)
                     vdir = v.directory_name(vname)
@@ -87,6 +90,7 @@ def plan(cfg: ExperimentConfig, environ: dict[str, str] | None = None) -> tuple[
                             overlay_files=dict(v.overlay_files),
                             mcp_servers=[srv.model_dump() for srv in v.mcp_servers],
                             model_id=m.id,
+                            concurrency=cfg.concurrency,
                         )
                         planned.append(PlannedTrial(spec, ctx, v, vname))
     return planned, notes

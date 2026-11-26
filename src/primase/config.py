@@ -84,7 +84,8 @@ class VariantSpec(_Strict):
     env: dict[str, str] = Field(default_factory=dict, description="extra env vars for this variant's runner process")
     setup: list[str] = Field(default_factory=list, description="shell commands run before each trial (cwd = task dir)")
     prebuild: list[str] = Field(
-        default_factory=list, description="shell commands run once before the first trial of this variant"
+        default_factory=list,
+        description="shell commands run before each trial of this variant (cwd = task dir), before setup",
     )
     require_paths: list[str] = Field(
         default_factory=list,

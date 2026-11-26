@@ -3,14 +3,22 @@
 Layout written (Harbor-compatible, so :mod:`primase.collect` needs no special case)::
 
     <job>/<task>__<trial_id>/
-        result.json            started/finished, agent_execution, verifier_result.rewards, exception_info
+        result.json            started/finished, agent_execution, verifier_result.rewards, exception_info,
+                               workspace (path of the agent's cwd)
         agent/<cli>.txt        agent stdout (e.g. claude-code.txt stream-json)
         agent/stderr.txt
         agent/instruction.md   exact prompt given to the agent
-        agent/mcp.json         MCP config handed to the CLI (when the variant defines servers)
+        agent/command.json     argv (instruction elided)
+        agent/mcp.json         MCP config, when the agent plugin writes one (claude-code: always)
         verifier/reward.txt    written by tests/test.sh via $PRIMASE_VERIFIER_DIR
-        state/                 scratch dir for fixture servers ($PRIMASE_STATE_DIR), outside the workspace
-        workspace/             the agent's cwd (seeded from environment/workspace/)
+        state/                 scratch dir for fixture servers ($PRIMASE_STATE_DIR)
+
+    $TMPDIR/primase-ws-XXXX/   the agent's cwd (seeded from environment/workspace/), created outside the
+                               trial dir and any repo so the agent cannot walk up into the job dir or the
+                               task's tests; left on disk after the trial.
+
+The agent process does not get $PRIMASE_TASK_DIR / _TRIAL_DIR / _AGENT_DIR / _VERIFIER_DIR / _STATE_DIR
+(only $PRIMASE_PORT and $PRIMASE_WORKSPACE); local-setup.sh and tests/test.sh get all of them.
 
 Task conventions (all optional except tests/test.sh):
     environment/workspace/       copied into the agent's cwd (starter files); nothing else is copied.
@@ -32,6 +40,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from datetime import UTC, datetime
@@ -51,6 +60,11 @@ def free_port() -> int:
         return int(s.getsockname()[1])
 
 
+#: runner paths the agent must not be handed (they lead to the task's tests / answers and the verifier dir)
+_HIDDEN_FROM_AGENT = frozenset(
+    {"PRIMASE_TASK_DIR", "PRIMASE_TRIAL_DIR", "PRIMASE_AGENT_DIR", "PRIMASE_VERIFIER_DIR", "PRIMASE_STATE_DIR"}
+)
+
 _ENV_PLACEHOLDER = re.compile(r"\{\{env:([A-Za-z_][A-Za-z0-9_]*)\}\}")
 
 
@@ -67,26 +81,23 @@ def render_instruction(text: str, port: int, env: dict[str, str]) -> str:
     return _ENV_PLACEHOLDER.sub(sub, text)
 
 
-def mcp_config(servers: list[dict[str, Any]]) -> dict[str, Any]:
-    """Claude Code / Cursor ``mcpServers`` JSON."""
-    out: dict[str, Any] = {}
-    for s in servers:
-        if s.get("transport", "stdio") == "stdio":
-            entry: dict[str, Any] = {"command": s["command"], "args": list(s.get("args") or [])}
-            if s.get("env"):
-                entry["env"] = dict(s["env"])
-        else:
-            entry = {"type": "http" if s["transport"] == "streamable-http" else "sse", "url": s["url"]}
-        out[s["name"]] = entry
-    return {"mcpServers": out}
-
-
 def _kill_group(proc: subprocess.Popen[Any] | None) -> None:
+    """SIGTERM the process group, wait up to 5 s for it to disappear, then SIGKILL what is left."""
     if proc is None:
         return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
-        time.sleep(0.5)
+    except (ProcessLookupError, PermissionError):
+        return
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        proc.poll()  # reap the leader so a zombie does not keep the group alive
+        try:
+            os.killpg(proc.pid, 0)
+        except (ProcessLookupError, PermissionError):
+            return
+        time.sleep(0.1)
+    try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
@@ -99,9 +110,10 @@ def _span(start: str, end: str) -> dict[str, str]:
 def _prepare_workspace(task_dir: Path, ws: Path) -> None:
     """Seed the agent's cwd from ``environment/workspace/`` only.
 
-    Everything else under ``environment/`` (fixture sites, servers, Docker files) stays out of the
-    agent's working directory so answers cannot be read off disk; ``local-setup.sh`` reaches it via
-    ``$PRIMASE_TASK_DIR``.
+    Everything else under ``environment/`` (fixture sites, servers, Docker files) and ``tests/`` stays
+    out of the agent's working directory, and the agent's env carries no path to the task or trial dir.
+    This is not a sandbox: the agent runs as the same user and could still find those files by
+    searching the disk. ``local-setup.sh`` reaches them via ``$PRIMASE_TASK_DIR``.
     """
     src = task_dir / "environment" / "workspace"
     if src.is_dir():
@@ -124,10 +136,10 @@ def run(spec: dict[str, Any]) -> dict[str, Any]:
     trial = Path(spec["trial_dir"])
     if trial.exists():
         shutil.rmtree(trial)
-    agent_dir, verifier_dir, ws = trial / "agent", trial / "verifier", trial / "workspace"
-    state_dir = trial / "state"
-    for d in (agent_dir, verifier_dir, ws, state_dir):
+    agent_dir, verifier_dir, state_dir = trial / "agent", trial / "verifier", trial / "state"
+    for d in (agent_dir, verifier_dir, state_dir):
         d.mkdir(parents=True)
+    ws = Path(tempfile.mkdtemp(prefix="primase-ws-"))
     toml = tomllib.loads((task_dir / "task.toml").read_text())
     agent_timeout = float((toml.get("agent") or {}).get("timeout_sec") or 600) * float(
         spec.get("agent_timeout_multiplier") or 1
@@ -148,17 +160,12 @@ def run(spec: dict[str, Any]) -> dict[str, Any]:
             "PRIMASE_STATE_DIR": str(state_dir),
         }
     )
-    mcp_path: Path | None = None
-    if spec.get("mcp_servers"):
-        cfg = json.dumps(mcp_config(spec["mcp_servers"]), indent=2)
-        mcp_path = agent_dir / "mcp.json"
-        mcp_path.write_text(cfg)
-        (ws / ".cursor").mkdir(exist_ok=True)
-        (ws / ".cursor" / "mcp.json").write_text(cfg)
+    agent_env = {k: v for k, v in env.items() if k not in _HIDDEN_FROM_AGENT}
 
     result: dict[str, Any] = {
         "task_name": spec["task"],
         "trial_name": trial.name,
+        "workspace": str(ws),
         "started_at": _now(),
         "agent_info": {"name": spec["agent"], "version": None},
         "config": {"agent": {"name": spec["agent"], "model_name": spec.get("model")}, "backend": "local"},
@@ -182,11 +189,14 @@ def run(spec: dict[str, Any]) -> dict[str, Any]:
             workspace=ws,
             agent_dir=agent_dir,
             kwargs=dict(spec.get("agent_kwargs") or {}),
-            mcp_config=mcp_path,
+            mcp_servers=list(spec.get("mcp_servers") or []),
         )
         cmd = get_agent(spec["agent"]).local_command(inv)
         if cmd is None:
             raise RuntimeError(f"agent {spec['agent']!r} does not support the local backend")
+        for path, content in cmd.files.items():
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(content)
         shown = ["<instruction>" if a == instruction else a for a in cmd.argv]
         (agent_dir / "command.json").write_text(json.dumps(shown))
         a0 = _now()
@@ -194,7 +204,7 @@ def run(spec: dict[str, Any]) -> dict[str, Any]:
             proc = subprocess.Popen(
                 cmd.argv,
                 cwd=ws,
-                env={**env, **cmd.env},
+                env={**agent_env, **cmd.env},
                 stdout=out,
                 stderr=err,
                 stdin=subprocess.DEVNULL,
@@ -203,12 +213,12 @@ def run(spec: dict[str, Any]) -> dict[str, Any]:
             try:
                 proc.wait(timeout=agent_timeout)
             except subprocess.TimeoutExpired:
-                _kill_group(proc)
-                proc.wait()
                 result["exception_info"] = {
                     "exception_type": "AgentTimeoutError",
                     "exception_message": f"agent exceeded {agent_timeout:.0f}s",
                 }
+            _kill_group(proc)  # also on a normal exit: children the agent left behind must not outlive the trial
+            proc.wait()
         result["agent_execution"] = _span(a0, _now())
         result["agent_result"] = {"exit_code": proc.returncode}
 

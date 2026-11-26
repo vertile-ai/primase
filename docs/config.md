@@ -50,9 +50,9 @@ variants:
     dir: agentic
     env: { NODE_OPTIONS: "--require /opt/extra/preload.js" }
     setup: []                         # shell, cwd = task dir, each trial
-    prebuild: []
+    prebuild: []                      # shell, cwd = task dir, each trial, before setup
     require_paths: [environment/extra-layer]
-    require_commands: [agent-browser]   # local backend: validate fails if not on PATH
+    require_commands: [agent-browser]   # local backend only: validate fails if not on PATH; version recorded
     image_prefix: extra-
   config-b:
     agent:
@@ -85,6 +85,8 @@ variants:
 - If `agent` is set, name/kwargs/plugin merge over the experiment-level agent
   (kwargs and plugin are shallow-merged). The agent only changes when the variant sets
   `agent.name` explicitly (0.2.0 silently fell back to `cursor-cli` when only `kwargs` was set).
+- Not every field is honoured by every backend; `validate` fails when a variant sets one its
+  backend ignores (see [backends.md](backends.md#what-local-does-not-support)).
 - `task_toml` overlays are applied in the same per-trial task directory overlay
   Harbor uses for `network: open`.
 
@@ -97,6 +99,11 @@ variants:
 | `max_estimated_cost_usd` | `null` | price-table estimate runaway guard |
 
 Cursor `included_models` lives under `agent.plugin`, not here.
+
+The defaults abort on the first billed cent. `claude-code` reports a cost on every run, so an
+experiment that uses it must set `stop_on_billed_cost: false` and a non-zero
+`max_reported_cost_usd`. A trial that was killed on timeout reports no cost and is not counted
+toward the cap.
 
 ### Migration from 0.1
 
