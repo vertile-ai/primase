@@ -1,11 +1,20 @@
 # primase
 
-A unified, resumable benchmark harness for agent evals. Primase sits **on top of**
-[Harbor](https://github.com/harbor-framework/harbor) (and, optionally,
-[Pier](https://github.com/datacurve-ai/pier)): you keep writing tasks in those
-formats, and primase gives you one experiment YAML, one result schema, and a
-report that answers *did pass rate hold, and if so, how many tokens and how much
-time did a variant save?*
+A Harbor extension with one job: **measure token savings without giving up correctness.**
+Primase sits **on top of** [Harbor](https://github.com/harbor-framework/harbor) (and, optionally,
+[Pier](https://github.com/datacurve-ai/pier)): you keep writing tasks in those formats, and
+primase runs a baseline and any number of variants and answers two questions, in this order:
+
+1. **Correctness gate** — did the variant hold the baseline's pass rate on the same tasks and
+   trials? If it dropped (`REGRESSION`) or the evidence is too thin to tell (`unclear`), its
+   token numbers are shown but not credited.
+2. **Token delta** (the headline) — on tasks both arms pass, how many tokens (input / cache /
+   output), turns, tool calls, and how much time and cost did the variant save? Median per-task
+   delta with a bootstrap 95% CI; a direction is claimed only with at least 6 paired tasks.
+
+A "variant" is anything you want to price: an agent runtime, an agent config, a model, a
+prompt, a context-compression layer, or a **tool** (e.g. which browser CLI or MCP server the
+agent drives — see [docs/tools.md](docs/tools.md)).
 
 Primase is an **extension of Harbor**, not a competitor: it adds the comparison,
 budget, secrets, and reproducibility layer Harbor does not provide, and stays
@@ -26,11 +35,11 @@ Requires Python 3.11–3.13.
 
 | | Harbor / Pier alone | Primase |
 |---|---|---|
-| Backends | One runner, one CLI | One interface over Harbor (primary) and Pier (optional), plus pluggable entry points |
+| Backends | One runner, one CLI | One interface over Harbor (primary), Pier (optional), `local` (host, for tools that can't be containerized), plus pluggable entry points |
 | Agents | Product-specific flags/logs | Uniform agent plugins (`cursor-cli`, `claude-code`, `codex`, `noop`, …) for invoke + metrics |
-| Experiment | Flags assembled by hand | One YAML: models, **general variants** (agent/model/task.toml/env), tiers, trials, budget, network |
+| Experiment | Flags assembled by hand | One YAML: models, **general variants** (agent/model/task.toml/env/instruction/MCP servers/files), tiers, trials, budget, network |
 | Results | Per-job `result.json` / trajectories | Normalized schema 2.0: pass/fail, tokens, cost, timings, turns, tool calls, **provenance** |
-| Comparison | You write the spreadsheet | N-arm report: each variant vs baseline; REGRESSION flag; median deltas + bootstrap CI |
+| Comparison | You write the spreadsheet | Verdict per variant: correctness gate first, then median token delta + bootstrap CI; absolute medians; tool-call breakdown |
 | Budget | — | Generic billed-cost / estimate caps; product allow-lists live on the agent plugin |
 | Secrets | Easy to leak into logs | Env / chmod-600 env-file only; redacted logs; scrubbed job dirs; redacted export bundles |
 | Resume | Re-run the job | Deterministic trial IDs; completed jobs skipped |
@@ -51,6 +60,7 @@ primase scan-secrets --env-file ~/.config/mybench/secrets.env --prefix sk- .
 ```
 
 Filters `--suite/--task/--model/--variant/--agent/--trial` work on every command.
+`run` validates first and refuses to start if any selected trial is invalid.
 `--dry-run` prints the exact Harbor/Pier argv; `--force` re-runs a finished trial.
 
 ## Experiment config (sketch)
@@ -115,10 +125,11 @@ primase plan|validate|run|collect|report|export|verify|scan-secrets
         ├── agents/           uniform plugins: invoke kwargs + collect metrics + budget hooks
         ├── registry.py       suites.json → tasks, tiers, variant dirs
         ├── orchestrator.py   plan → run (resume, concurrency, ledger, provenance) → collect
-        ├── backends/         Harbor (primary), Pier (optional)
+        ├── backends/         Harbor (primary), Pier (optional), local (host)
+        ├── local_runner.py   one host trial: workspace, agent CLI, verifier → Harbor-shaped result.json
         ├── collect.py        job dir → TrialResult (delegates to agent plugins)
         ├── budget.py         generic billed-cost + estimate caps
-        ├── report.py         N-arm CSV + summary.md (bootstrap CI)
+        ├── report.py         verdict (gate → token delta) + N-arm CSV/summary.md (bootstrap CI)
         ├── provenance.py     versions, hashes, digests, artifact paths
         ├── export.py         redacted publishable bundle + verify
         └── secrets.py        env / env-file only; redactor + scrub_tree
@@ -126,7 +137,8 @@ primase plan|validate|run|collect|report|export|verify|scan-secrets
 
 - [docs/config.md](docs/config.md) — config schema + migration
 - [docs/agents.md](docs/agents.md) — third-party agent plugin interface
-- [docs/backends.md](docs/backends.md) — third-party backend adapters
+- [docs/backends.md](docs/backends.md) — third-party backend adapters + the `local` backend
+- [docs/tools.md](docs/tools.md) — benchmarking tools (browser CLIs, MCP servers) as variants
 - [CONTRIBUTING.md](CONTRIBUTING.md) — development setup
 
 ## License

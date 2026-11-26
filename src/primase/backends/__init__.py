@@ -20,9 +20,10 @@ _REGISTRY: dict[str, type[Backend]] | None = None
 
 def _builtins() -> dict[str, type[Backend]]:
     from .harbor import HarborBackend
+    from .local import LocalBackend
     from .pier import PierBackend
 
-    return {"harbor": HarborBackend, "pier": PierBackend}
+    return {"harbor": HarborBackend, "pier": PierBackend, "local": LocalBackend}
 
 
 def _entry_point_backends() -> dict[str, type[Backend]]:

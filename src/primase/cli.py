@@ -10,10 +10,11 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .backends import Validation
 from .config import ExperimentConfig, load_config
 from .export import export_bundle, load_rows_from_bundle, verify_bundle
 from .orchestrator import Orchestrator, PlannedTrial, plan
-from .report import markdown, write_csv
+from .report import markdown, row_from_csv, write_csv
 from .schema import TrialResult
 from .secrets import Redactor, SecretStore, parse_env_file
 
@@ -164,14 +165,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     orch = Orchestrator(cfg, secrets)
+
+    def _line(p: PlannedTrial, v: Validation) -> str:
+        return (
+            f"{'OK ' if v.ok else 'BAD'} {p.spec.backend:6} {p.spec.suite}/{p.spec.task} "
+            f"{p.spec.variant}/{p.spec.agent}: {'; '.join(v.messages)}"
+        )
+
     if args.cmd == "validate":
         bad = 0
         for p, v in orch.validate(trials):
             bad += not v.ok
-            print(
-                f"{'OK ' if v.ok else 'BAD'} {p.spec.backend:6} {p.spec.suite}/{p.spec.task} "
-                f"{p.spec.variant}/{p.spec.agent}: {'; '.join(v.messages)}"
-            )
+            print(_line(p, v))
         print(f"# {len(trials) - bad}/{len(trials)} valid; secrets: {secrets.describe()}")
         return 1 if bad else 0
 
@@ -185,6 +190,12 @@ def main(argv: list[str] | None = None) -> int:
             for p in trials:
                 print(" ".join(get_backend(p.spec.backend, p.ctx.root).build_command(p.spec, p.ctx)))
             return 0
+        failed = [(p, v) for p, v in orch.validate(trials) if not v.ok]
+        if failed:
+            for p, v in failed:
+                print(_line(p, v))
+            print(f"# refusing to run: {len(failed)}/{len(trials)} trials failed validation", file=sys.stderr)
+            return 1
         rows, abort = orch.run(trials, force=args.force)
         csv_p, md_p = _report(
             cfg,
@@ -204,8 +215,7 @@ def main(argv: list[str] | None = None) -> int:
             with csv_path.open(newline="") as csv_file:
                 for rec in csv.DictReader(csv_file):
                     # coerce empty strings to None for optional fields
-                    clean = {k: (v if v != "" else None) for k, v in rec.items()}
-                    rows.append(TrialResult.model_validate(clean))
+                    rows.append(row_from_csv(rec))
         out = Path(args.output) if args.output else cfg.results_path / "bundle"
         path = export_bundle(cfg, rows, out, secrets=secrets)
         print(f"exported {len(rows)} trials → {path}")

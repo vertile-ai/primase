@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from primase.agents import AgentPlugin, AgentMetrics, BudgetHook
 
+
 class MyAgentPlugin(AgentPlugin):
     name = "my-agent"
     billed_cost_sources = frozenset({"my_agent"})  # cost_source values that mean "CLI billed"
@@ -31,9 +32,22 @@ class MyAgentPlugin(AgentPlugin):
         return []
 ```
 
+For the `local` backend, also implement:
+
+```python
+from primase.agents import LocalCommand, LocalInvocation
+
+    def local_command(self, inv: LocalInvocation) -> LocalCommand | None:
+        # inv.instruction, inv.model, inv.workspace (cwd), inv.agent_dir, inv.kwargs, inv.mcp_config
+        return LocalCommand(argv=["my-agent", "-p", inv.instruction], stdout_file="my-agent.txt")
+```
+
+`collect()` then parses `agent/<stdout_file>` exactly as it would a Harbor run.
+
 `AgentMetrics` fields: `input/output/cache_read/cache_write` tokens, `reported_cost_usd`,
 `cost_source`, `n_turns`, `n_tool_calls`, tool/shell output sizes, `wall_time_s`,
-`model`, `agent_version`.
+`model`, `agent_version`, and `extra` (e.g. `tool_calls_by_name` — shell calls are labelled by
+program, `Bash:agent-browser`, MCP calls by tool name — and `tool_result_images`).
 
 ## Registration
 

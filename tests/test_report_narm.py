@@ -31,7 +31,8 @@ def test_three_arm_regressions_and_deltas():
     ]
     regs = {r["variant"]: r for r in regressions(rows, baseline="control")}
     assert regs["v1"]["regression"] is False
-    assert regs["v2"]["regression"] is True  # 50% vs 100%
+    assert regs["v2"]["gate"] == "unclear"  # 50% vs 100% over 2 tasks: CI includes 0
+    assert regs["v2"]["lost_tasks"] == ["a"]
     deltas = paired_deltas(rows, baseline="control")
     # v1: both tasks both-pass; v2: only task b both-pass
     assert {(d["variant"], d["task"]) for d in deltas} == {("v1", "a"), ("v1", "b"), ("v2", "b")}

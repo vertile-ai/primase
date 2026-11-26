@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.3.0 – unreleased
+
+Primase's headline is now explicit: **correctness gate first, then token savings.** This release
+makes *tools* (browser CLIs, MCP servers, skills, prompts) first-class variants and adds a host
+backend for tools that cannot run in a container.
+
+- Variant `require_commands`: the local backend's `validate` fails when a tool CLI is not on PATH,
+  so a missing tool is caught before any paid trial.
+
+### Measurement validity (design review follow-up)
+
+- **Gate**: computed over (task, trial) cells present in both arms; errored trials are counted
+  separately; outcomes are `hold` / `REGRESSION` / `unclear`. Lost tasks and unstable baseline
+  tasks are listed.
+- **Verdict**: a direction needs at least 6 paired tasks; the CI resamples tasks and trials;
+  the bootstrap seed is stable across processes; aggregate Δ tokens, Δ cost and dropped-task
+  counts are shown.
+- **Usage**: a Claude Code trial with no final `result` event reports the sum of its per-message
+  usage and is marked `usage_partial`; timed-out and partial trials are excluded from token
+  deltas. Codex usage now reads the cumulative total and no longer double counts cached input.
+- **`local` backend**: the agent runs in a temp workspace outside the trial dir and no longer
+  receives the task / verifier paths; `claude-code` always runs with `--strict-mcp-config` and
+  `--setting-sources project` (override: `agent.kwargs.setting_sources`); the agent's process
+  group is killed after every trial; `concurrency > 1` is rejected.
+- **Validation**: variant fields the backend ignores fail `validate`; `run` validates first.
+- **Provenance**: `variant_hash` covers the content of `@file` prompts and `overlay_files`;
+  `tool_versions` records `--version` of each `require_commands` entry. Arm order rotates per
+  task and trial. The Cursor plugin emits `tool_calls_by_name`.
+- New `TrialResult` fields: `usage_partial`, `tool_versions` (additive; schema stays 2.0).
+
+### Verdict-first reports
+
+`summary.md` opens with a **Verdict** table per (suite, model, variant): pass rate baseline →
+variant, gate, paired-task count, median Δ total tokens with bootstrap 95% CI, aggregate Δ
+tokens, Δ prompt / output tokens, Δ turns, Δ agent time, Δ cost, and a verdict. Followed by
+absolute medians per variant and a tool-usage breakdown. See
+[docs/tools.md](docs/tools.md#how-the-verdict-is-decided) for the rules.
+
+### Tool variants
+
+New `VariantSpec` fields, applied in the per-trial task overlay (source tasks are never touched):
+`instruction_prepend` / `instruction_append` (text or `@file`), `mcp_servers` (Harbor
+`[[environment.mcp_servers]]`; local backend: `--mcp-config`), `overlay_files`
+(`{dest: src}` copies, e.g. a skill or Dockerfile layer). See [docs/tools.md](docs/tools.md).
+
+### `local` backend
+
+`backend: local` runs the agent CLI on the host via `python -m primase.local_runner` and writes a
+Harbor-shaped trial dir, so collection, resume, redaction and reports are unchanged. Agent plugins
+gain `local_command()` (built in for `claude-code` and `cursor-cli`; any agent via
+`agent.kwargs.local_command`). See [docs/backends.md](docs/backends.md#local-backend).
+
+### Metrics
+
+- Claude Code stream-json now yields turns (distinct assistant messages), tool calls, tool-result
+  chars, shell calls/output, screenshots returned, CLI version, and `tool_calls_by_name`
+  (`Bash:<program>` / MCP tool names). New `TrialResult` fields: `tool_calls_by_name`,
+  `tool_result_images` (additive; schema stays 2.0).
+- `trials.csv` JSON-encodes dict/list columns; `primase export` reloads them (`row_from_csv`).
+
+### Fixes
+
+- A variant that only set `agent.kwargs` / `agent.plugin` silently switched the agent to
+  `cursor-cli` (the `AgentSpec.name` default). The experiment-level agent is now kept unless the
+  variant sets `agent.name`.
+- `toml_edit` treats `[[array.of.tables]]` headers as table boundaries, so table-key patches never
+  land inside an array-of-tables block.
+- Harbor overlays: task.toml overrides, network patch, MCP servers and instruction/file overlays
+  are folded into a single overlay (`Backend.build_overlay`).
+
 ## 0.2.0 – 2026-11-15
 
 General variant overrides, uniform agent plugins, N-arm reports, and publishable

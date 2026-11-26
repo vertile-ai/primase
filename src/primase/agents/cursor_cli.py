@@ -7,7 +7,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .base import AgentMetrics, AgentPlugin, BudgetHook
+from .base import (
+    AgentMetrics,
+    AgentPlugin,
+    BudgetHook,
+    LocalCommand,
+    LocalInvocation,
+    generic_local_command,
+    mcp_config,
+)
 
 STREAM = "cursor-cli.txt"
 
@@ -59,6 +67,7 @@ def parse_cursor_stream(path: Path) -> AgentMetrics:
     if not path.exists():
         return out
     model_calls: set[str] = set()
+    by_name: dict[str, int] = {}
     tool_calls = 0
     shell_calls = 0
     tool_chars = 0
@@ -84,6 +93,7 @@ def parse_cursor_stream(path: Path) -> AgentMetrics:
                     if not isinstance(call, dict):
                         continue
                     tool_calls += 1
+                    by_name[name] = by_name.get(name, 0) + 1
                     shell_calls += int(name == "shellToolCall")
                     vis, sh = tool_output(name, call.get("result"))
                     tool_chars += vis
@@ -107,6 +117,7 @@ def parse_cursor_stream(path: Path) -> AgentMetrics:
     out.n_shell_calls = shell_calls
     out.tool_output_chars = tool_chars
     out.shell_output_chars = shell_chars
+    out.extra["tool_calls_by_name"] = dict(sorted(by_name.items()))
     return out
 
 
@@ -133,6 +144,9 @@ class CursorCliPlugin(AgentPlugin):
     name = "cursor-cli"
     billed_cost_sources = frozenset({"cursor_cli"})
 
+    def local_command(self, inv: LocalInvocation) -> LocalCommand | None:
+        return _cursor_local_command(inv)
+
     def collect(self, agent_dir: Path) -> AgentMetrics:
         return parse_cursor_stream(Path(agent_dir) / STREAM)
 
@@ -143,3 +157,28 @@ class CursorCliPlugin(AgentPlugin):
         if not patterns and not allow:
             return []
         return [IncludedModelsHook(patterns, allow_non_included=allow)]
+
+
+def _cursor_local_command(inv: LocalInvocation) -> LocalCommand | None:
+    """``cursor-agent -p --output-format stream-json`` headless on the host → ``cursor-cli.txt``.
+
+    MCP servers: cursor-agent reads ``.cursor/mcp.json`` from the workspace; it is written there (and
+    ``--approve-mcps`` passed) only when the variant defines servers.
+    kwargs: ``binary`` (default ``cursor-agent``), ``force`` (default true), ``extra_args`` (list).
+    """
+    generic = generic_local_command(inv, default_stdout=STREAM)
+    if generic is not None:
+        return generic
+    kw = inv.kwargs
+    argv = [str(kw.get("binary") or "cursor-agent"), "-p", inv.instruction, "--output-format", "stream-json"]
+    if inv.model:
+        argv += ["--model", inv.model]
+    argv += ["--workspace", str(inv.workspace), "--trust"]
+    if kw.get("force", True):
+        argv += ["--force"]
+    files: dict[str, str] = {}
+    if inv.mcp_servers:
+        argv += ["--approve-mcps"]
+        files[str(inv.workspace / ".cursor" / "mcp.json")] = json.dumps(mcp_config(inv.mcp_servers), indent=2)
+    argv += [str(a) for a in kw.get("extra_args") or []]
+    return LocalCommand(argv=argv, stdout_file=STREAM, files=files)

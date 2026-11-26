@@ -6,7 +6,9 @@ import json
 import re
 from typing import Any
 
-_TABLE = re.compile(r"^\[([^\]]+)\]\s*$")
+_TABLE = re.compile(r"^\[([^\[\]]+)\]\s*(#.*)?$")
+# [[array.of.tables]] headers end the previous table's body; they are reported as "[[name]]".
+_ARRAY_TABLE = re.compile(r"^\[\[([^\[\]]+)\]\]\s*(#.*)?$")
 _KEY = re.compile(r"^([A-Za-z0-9_-]+)\s*=")
 
 
@@ -19,10 +21,11 @@ def iter_tables(text: str) -> list[tuple[str, int, int]]:
     offset = 0
     for line in lines:
         m = _TABLE.match(line)
-        if m:
+        am = None if m else _ARRAY_TABLE.match(line)
+        if m or am:
             if current is not None:
                 spans.append((current, body_start, offset))
-            current = m.group(1)
+            current = m.group(1).strip() if m else f"[[{am.group(1).strip()}]]"  # type: ignore[union-attr]
             body_start = offset + len(line)
         offset += len(line)
     if current is not None:
@@ -108,4 +111,22 @@ def apply_overrides(text: str, overrides: dict[str, dict[str, Any]]) -> tuple[st
                 notes.append(f"{table}.{key} {prev!r} -> {value!r}")
             else:
                 notes.append(f"{table}.{key} set to {value!r}")
+    return out, notes
+
+
+def append_array_tables(text: str, table: str, entries: list[dict[str, Any]]) -> tuple[str, list[str]]:
+    """Append one ``[[table]]`` block per entry (scalar / list values only). Returns (new_text, notes)."""
+    if not entries:
+        return text, []
+    out = text if (text.endswith("\n") or not text) else text + "\n"
+    notes: list[str] = []
+    for entry in entries:
+        out += f"\n[[{table}]]\n"
+        for key, value in entry.items():
+            if value is None or value == {} or value == []:
+                continue
+            if isinstance(value, dict):
+                continue  # nested tables are not rendered (keep the overlay flat)
+            out += f"{key} = {_format_value(value)}\n"
+        notes.append(f"[[{table}]] {entry.get('name', '?')} appended")
     return out, notes
